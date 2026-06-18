@@ -1,6 +1,10 @@
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
+import { useFonts } from "expo-font";
+import { StatusBar } from "expo-status-bar";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 
@@ -11,17 +15,31 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [loaded, error] = useIconFonts();
+  const [iconsLoaded, iconsError] = useIconFonts();
+
+  const [fontsLoaded, fontsError] = useFonts({
+    Fraunces:
+      "https://cdn.jsdelivr.net/npm/@fontsource/fraunces@5.0.20/files/fraunces-latin-400-normal.woff2",
+    "Fraunces-Medium":
+      "https://cdn.jsdelivr.net/npm/@fontsource/fraunces@5.0.20/files/fraunces-latin-500-normal.woff2",
+  });
+
+  const fontsReady = fontsLoaded || !!fontsError;
 
   useEffect(() => {
-    if (loaded || error) {
+    if ((iconsLoaded || iconsError) && fontsReady) {
       SplashScreen.hideAsync();
     }
-  }, [loaded, error]);
+  }, [iconsLoaded, iconsError, fontsReady]);
 
-  // If the CDN is unreachable we fall through on error rather than wedging
-  // the app — icons will tofu, but the app still boots.
-  if (!loaded && !error) return null;
+  if ((!iconsLoaded && !iconsError) || !fontsReady) return null;
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#0a0a0c" }}>
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#0a0a0c" }, animation: "fade" }} />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
 }
