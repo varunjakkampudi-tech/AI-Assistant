@@ -1,0 +1,139 @@
+{
+  "app_name": "Nova",
+  "personality": "6 Glass / Luxe DARK",
+  "personality_one_liner": "A cinematic, deeply atmospheric AI assistant that feels like an expensive, warm, glowing entity rather than a corporate chatbot.",
+  "color": {
+    "surface": "#0a0a0c",
+    "onSurface": "#F7F7F8",
+    "surfaceSecondary": "#151518",
+    "onSurfaceSecondary": "#B4B4B8",
+    "surfaceTertiary": "#1C1C20",
+    "onSurfaceTertiary": "#E2E2E4",
+    "surfaceInverse": "#EAEAEB",
+    "onSurfaceInverse": "#0A0A0C",
+    "brand": "#E1B168",
+    "brandPrimary": "#E1B168",
+    "onBrandPrimary": "#1A1104",
+    "brandSecondary": "#C99645",
+    "onBrandSecondary": "#1A1104",
+    "brandTertiary": "#291F11",
+    "onBrandTertiary": "#E1B168",
+    "success": "#4A7A59",
+    "onSuccess": "#FFFFFF",
+    "warning": "#C48E4B",
+    "onWarning": "#1A1104",
+    "error": "#8B3A3A",
+    "onError": "#FFFFFF",
+    "info": "#425A6B",
+    "onInfo": "#FFFFFF",
+    "border": "#222226",
+    "borderStrong": "#333338",
+    "divider": "#1F1F23"
+  },
+  "typography": {
+    "displayFontFamily": "Fraunces",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous, cinematic spacing. Elements should breathe heavily. Minimal padding around floating components to make them feel like physical glass objects.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "drawer",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Use heavy glassmorphism for the bottom input row / microphone container.",
+      "Use glass for the chat history drawer panel.",
+      "Apply subtle grain/noise on the root background if possible, below the glass surfaces."
+    ],
+    "dont's": [
+      "Never blur body text or dense chat areas.",
+      "Do not stack more than two glass surfaces (e.g. drawer over input bar).",
+      "Do not use glass for user chat bubbles."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Chat & Voice Assistant",
+      "purpose": "The core interaction screen seamlessly blending typing and voice in a cinematic environment.",
+      "states": {
+        "loading": "A dark screen with a very slow pulsing ambient glow at the center in the brand hue (#E1B168).",
+        "empty": "A gorgeous, cinematic greeting using Fraunces display font centered on screen, with a subtle glowing orb visual above it.",
+        "error": "A smooth red-tinted glass toast notification appearing from the top edge, pushing content down softly."
+      },
+      "layout": "ROOT: Full screen dark background, optionally containing a very subtle dark noise/sand texture layer via Skia or an ultra-low opacity image. HEADER: Transparent, just a subtle hamburger menu icon (left) and a 'New Chat' icon (right). CHAT AREA: A flat list that starts from the bottom. User messages are aligned right, wrapped in `surfaceTertiary` pills. AI messages are aligned left, raw text (no bubble) with the AI logo or spark icon beside it. VOICE STATE: When listening, the flat list darkens/fades back, and a large, glowing amber waveform / orb takes over the center of the screen, with real-time transcript text floating just below it in a large, elegant serif font. BOTTOM BAR: A floating pill or edge-to-edge frosted glass container housing the text input, a prominent primary mic button (brand color), and an attachment icon."
+    },
+    {
+      "name": "Chat History Drawer",
+      "purpose": "A premium, frosted-glass slide-out panel allowing users to recall past conversations.",
+      "states": {
+        "loading": "Shimmering text blocks with low opacity.",
+        "empty": "No past conversations. 'Begin your journey' centered text.",
+        "error": "Failed to load history, retry button presented cleanly."
+      },
+      "layout": "A drawer that slides in from the left. Instead of a solid color, the drawer background is heavily blurred/frosted glass. List rows are large and touchable (min 56pt), separating 'Today', 'Yesterday', etc. Selected chat has a subtle `brandTertiary` background pill."
+    }
+  ],
+  "images": {
+    "empty_state_orb": {
+      "url": "https://images.pexels.com/photos/1715495/pexels-photo-1715495.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "dark": "https://images.pexels.com/photos/35990758/pexels-photo-35990758.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "A glowing warm amber sphere setting a serene and mysterious AI presence."
+    },
+    "background_texture": {
+      "url": "https://images.pexels.com/photos/2387818/pexels-photo-2387818.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "A very dark, subtle sand texture to provide organic noise behind the glass UI."
+    }
+  },
+  "haptics": {
+    "mic_press_start": "impactHeavy",
+    "mic_press_stop": "impactMedium",
+    "message_sent": "impactLight",
+    "drawer_open": "selection",
+    "new_chat_created": "notificationSuccess"
+  },
+  "instructions_to_main_agent": [
+    "Apply '6 Glass / Luxe DARK' personality. The UI must feel expensive, cinematic, and deeply atmospheric, entirely avoiding corporate AI blue/purple defaults.",
+    "Use Fraunces (weight 400/500 only) for the AI's greeting/display titles, and Satoshi (weight 400/500) for UI elements and user messages. Do NOT use Inter or Roboto.",
+    "The primary accent is Antique Gold / Amber (#E1B168), acting as a warm, humanizing glow. Use it for the microphone button and the listening waveform.",
+    "Implement the listening state as a prominent central focal point (a waveform or glowing orb), pushing the text chat to the background.",
+    "The bottom input bar MUST use heavy glassmorphism (`expo-blur`), hovering over the content. Make sure the safe area at the bottom is respected.",
+    "User chat bubbles are simple `surfaceTertiary` pills. AI responses are NOT bubbled—they are raw text rendered directly on the background (or glass) with high readability to emphasize an 'omnipresent' feel.",
+    "Use the provided `background_texture` image at a very low opacity (5-10%) behind a dark gradient scrim as the root app background to give it an organic, non-flat dark feel.",
+    "Integrate Phosphor icons exclusively, outlined format.",
+    "Wire haptics for voice interactions: a heavy impact when the mic starts listening, and a medium impact when it stops."
+  ]
+}
