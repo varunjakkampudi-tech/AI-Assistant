@@ -1,1199 +1,314 @@
 #!/usr/bin/env python3
 """
-Comprehensive backend API test suite for Nova AI Assistant
-Tests all critical endpoints against production URL
+Backend API Testing for Nova AI Assistant - Advanced Features
+Tests: Personal Finance Brain, Personal Digital Twin, AI Chief of Staff
 """
-
 import requests
 import json
-import uuid
-from datetime import datetime, timezone
-from typing import Optional
+import sys
+from datetime import datetime
 
-# API URL - using localhost for testing in container
+# Backend URL - using localhost since we're testing from inside the container
 BASE_URL = "http://localhost:8001/api"
 
-class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    END = '\033[0m'
+# Color codes for output
+GREEN = '\033[92m'
+RED = '\033[91m'
+YELLOW = '\033[93m'
+BLUE = '\033[94m'
+RESET = '\033[0m'
 
-def print_test(name: str, passed: bool, details: str = ""):
-    status = f"{Colors.GREEN}✓ PASS{Colors.END}" if passed else f"{Colors.RED}✗ FAIL{Colors.END}"
-    print(f"{status} - {name}")
+def print_test(name, status, details=""):
+    """Print test result with color coding."""
+    color = GREEN if status == "PASS" else RED if status == "FAIL" else YELLOW
+    print(f"{color}[{status}]{RESET} {name}")
     if details:
-        print(f"  {details}")
-    if not passed:
-        print()
+        print(f"      {details}")
 
-def print_section(name: str):
-    print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
-    print(f"{Colors.BLUE}{name}{Colors.END}")
-    print(f"{Colors.BLUE}{'='*60}{Colors.END}\n")
-
-# Test data storage
-test_data = {
-    "session_id": None,
-    "memory_id": None,
-    "goal_id": None,
-    "reminder_id": None,
-    "notification_id": None,
-    "call_id": None,
-    "missed_call_reminder_id": None,
-}
-
-def test_health_check():
-    """Test 1: Health Check - GET /api/"""
-    print_section("1. HEALTH CHECK")
+def test_endpoint(method, endpoint, data=None, expected_status=200, test_name=""):
+    """Generic endpoint tester."""
+    url = f"{BASE_URL}{endpoint}"
     try:
-        response = requests.get(f"{BASE_URL}/", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_message = "message" in data
-            has_model = "model" in data
-            model_name = data.get("model", "")
-            
-            passed = has_message and has_model
-            details = f"Status: {response.status_code}, Model: {model_name}"
-            print_test("Health check endpoint", passed, details)
-            
-            if "nova" in model_name.lower():
-                print_test("Amazon Nova model configured", True, f"Model: {model_name}")
-            else:
-                print_test("Amazon Nova model configured", False, f"Expected Nova model, got: {model_name}")
+        if method == "GET":
+            response = requests.get(url, timeout=30)
+        elif method == "POST":
+            response = requests.post(url, json=data, timeout=30)
         else:
-            print_test("Health check endpoint", False, f"Status: {response.status_code}")
-            
-    except Exception as e:
-        print_test("Health check endpoint", False, f"Error: {str(e)}")
-
-def test_sessions_crud():
-    """Test 2: Sessions CRUD operations"""
-    print_section("2. SESSIONS CRUD")
-    
-    # Create session
-    try:
-        payload = {"title": "Test Chat Session"}
-        response = requests.post(f"{BASE_URL}/sessions", json=payload, timeout=10)
-        passed = response.status_code == 200
+            return False, f"Unsupported method: {method}"
         
-        if passed:
-            data = response.json()
-            test_data["session_id"] = data.get("id")
-            has_id = "id" in data
-            has_title = data.get("title") == "Test Chat Session"
-            passed = has_id and has_title
-            print_test("Create session", passed, f"Session ID: {test_data['session_id']}")
-        else:
-            print_test("Create session", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Create session", False, f"Error: {str(e)}")
-    
-    # List sessions
-    try:
-        response = requests.get(f"{BASE_URL}/sessions", timeout=10)
-        passed = response.status_code == 200
+        if response.status_code != expected_status:
+            return False, f"Status {response.status_code}, expected {expected_status}"
         
-        if passed:
-            data = response.json()
-            is_list = isinstance(data, list)
-            print_test("List sessions", is_list, f"Found {len(data)} sessions")
-        else:
-            print_test("List sessions", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List sessions", False, f"Error: {str(e)}")
-    
-    # List sessions with search
-    try:
-        response = requests.get(f"{BASE_URL}/sessions?search=Test", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            print_test("List sessions with search", True, f"Found {len(data)} matching sessions")
-        else:
-            print_test("List sessions with search", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List sessions with search", False, f"Error: {str(e)}")
-    
-    # Get messages for session
-    if test_data["session_id"]:
         try:
-            response = requests.get(f"{BASE_URL}/sessions/{test_data['session_id']}/messages", timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                is_list = isinstance(data, list)
-                print_test("Get session messages", is_list, f"Found {len(data)} messages")
-            else:
-                print_test("Get session messages", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Get session messages", False, f"Error: {str(e)}")
-    
-    # Toggle pin
-    if test_data["session_id"]:
-        try:
-            response = requests.post(f"{BASE_URL}/sessions/{test_data['session_id']}/pin", timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                is_pinned = data.get("pinned", False)
-                print_test("Toggle pin session", True, f"Pinned: {is_pinned}")
-            else:
-                print_test("Toggle pin session", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Toggle pin session", False, f"Error: {str(e)}")
-
-def test_chat_endpoint():
-    """Test 3: Chat endpoint with AWS Bedrock"""
-    print_section("3. CHAT ENDPOINT (AWS Bedrock)")
-    
-    if not test_data["session_id"]:
-        # Create a session first
-        try:
-            payload = {"title": "Chat Test Session"}
-            response = requests.post(f"{BASE_URL}/sessions", json=payload, timeout=10)
-            if response.status_code == 200:
-                test_data["session_id"] = response.json().get("id")
+            json_data = response.json()
+            return True, json_data
         except:
-            pass
+            return False, "Invalid JSON response"
     
-    if test_data["session_id"]:
-        try:
-            payload = {
-                "session_id": test_data["session_id"],
-                "message": "Hello Nova! Can you tell me what you are?"
-            }
-            response = requests.post(f"{BASE_URL}/chat", json=payload, timeout=30)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                has_session = "session_id" in data
-                has_user_msg = "user_message" in data
-                has_assistant_msg = "assistant_message" in data
-                
-                if has_assistant_msg:
-                    assistant_content = data["assistant_message"].get("content", "")
-                    has_response = len(assistant_content) > 0
-                    
-                    passed = has_session and has_user_msg and has_assistant_msg and has_response
-                    print_test("Chat with AWS Bedrock", passed, 
-                             f"Response length: {len(assistant_content)} chars")
-                    
-                    if has_response:
-                        print(f"  {Colors.YELLOW}AI Response preview:{Colors.END} {assistant_content[:150]}...")
-                else:
-                    print_test("Chat with AWS Bedrock", False, "No assistant message in response")
-            else:
-                print_test("Chat with AWS Bedrock", False, 
-                         f"Status: {response.status_code}, Response: {response.text[:300]}")
-        except Exception as e:
-            print_test("Chat with AWS Bedrock", False, f"Error: {str(e)}")
-    else:
-        print_test("Chat with AWS Bedrock", False, "No session ID available")
-
-def test_memories_crud():
-    """Test 4: Memories CRUD operations"""
-    print_section("4. MEMORIES CRUD")
-    
-    # Create memory
-    try:
-        payload = {
-            "category": "person",
-            "subject": "John Doe",
-            "content": "John is a software engineer who loves Python and AI",
-            "importance": 4
-        }
-        response = requests.post(f"{BASE_URL}/memories", json=payload, timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            test_data["memory_id"] = data.get("id")
-            has_id = "id" in data
-            correct_subject = data.get("subject") == "John Doe"
-            passed = has_id and correct_subject
-            print_test("Create memory", passed, f"Memory ID: {test_data['memory_id']}")
-        else:
-            print_test("Create memory", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+    except requests.exceptions.Timeout:
+        return False, "Request timeout (30s)"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection error"
     except Exception as e:
-        print_test("Create memory", False, f"Error: {str(e)}")
-    
-    # List all memories
-    try:
-        response = requests.get(f"{BASE_URL}/memories", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            is_list = isinstance(data, list)
-            print_test("List all memories", is_list, f"Found {len(data)} memories")
-        else:
-            print_test("List all memories", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List all memories", False, f"Error: {str(e)}")
-    
-    # List memories by category
-    try:
-        response = requests.get(f"{BASE_URL}/memories?category=person", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            print_test("List memories by category", True, f"Found {len(data)} person memories")
-        else:
-            print_test("List memories by category", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List memories by category", False, f"Error: {str(e)}")
-    
-    # Search memories
-    try:
-        response = requests.get(f"{BASE_URL}/memories?search=John", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            print_test("Search memories", True, f"Found {len(data)} matching memories")
-        else:
-            print_test("Search memories", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Search memories", False, f"Error: {str(e)}")
-    
-    # Delete memory
-    if test_data["memory_id"]:
-        try:
-            response = requests.delete(f"{BASE_URL}/memories/{test_data['memory_id']}", timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                print_test("Delete memory", data.get("ok") == True, "Memory deleted successfully")
-            else:
-                print_test("Delete memory", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Delete memory", False, f"Error: {str(e)}")
-
-def test_goals_crud():
-    """Test 5: Goals CRUD operations"""
-    print_section("5. GOALS CRUD")
-    
-    # Create goal
-    try:
-        payload = {
-            "title": "Learn AWS Bedrock",
-            "description": "Master AWS Bedrock for AI applications",
-            "target": "Complete by end of Q2 2024"
-        }
-        response = requests.post(f"{BASE_URL}/goals", json=payload, timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            test_data["goal_id"] = data.get("id")
-            has_id = "id" in data
-            correct_title = data.get("title") == "Learn AWS Bedrock"
-            passed = has_id and correct_title
-            print_test("Create goal", passed, f"Goal ID: {test_data['goal_id']}")
-        else:
-            print_test("Create goal", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Create goal", False, f"Error: {str(e)}")
-    
-    # List goals
-    try:
-        response = requests.get(f"{BASE_URL}/goals", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            is_list = isinstance(data, list)
-            print_test("List goals", is_list, f"Found {len(data)} goals")
-        else:
-            print_test("List goals", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List goals", False, f"Error: {str(e)}")
-    
-    # Update goal
-    if test_data["goal_id"]:
-        try:
-            payload = {
-                "progress": 50,
-                "status": "active"
-            }
-            response = requests.put(f"{BASE_URL}/goals/{test_data['goal_id']}", json=payload, timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                correct_progress = data.get("progress") == 50
-                print_test("Update goal", correct_progress, f"Progress updated to 50%")
-            else:
-                print_test("Update goal", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Update goal", False, f"Error: {str(e)}")
-    
-    # Delete goal
-    if test_data["goal_id"]:
-        try:
-            response = requests.delete(f"{BASE_URL}/goals/{test_data['goal_id']}", timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                print_test("Delete goal", data.get("ok") == True, "Goal deleted successfully")
-            else:
-                print_test("Delete goal", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Delete goal", False, f"Error: {str(e)}")
-
-def test_reminders_crud():
-    """Test 6: Reminders CRUD operations"""
-    print_section("6. REMINDERS CRUD")
-    
-    # Create reminder
-    try:
-        payload = {
-            "text": "Review AWS Bedrock documentation",
-            "condition": "Before next team meeting"
-        }
-        response = requests.post(f"{BASE_URL}/reminders", json=payload, timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            test_data["reminder_id"] = data.get("id")
-            has_id = "id" in data
-            correct_text = "AWS Bedrock" in data.get("text", "")
-            passed = has_id and correct_text
-            print_test("Create reminder", passed, f"Reminder ID: {test_data['reminder_id']}")
-        else:
-            print_test("Create reminder", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Create reminder", False, f"Error: {str(e)}")
-    
-    # List all reminders
-    try:
-        response = requests.get(f"{BASE_URL}/reminders", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            is_list = isinstance(data, list)
-            print_test("List all reminders", is_list, f"Found {len(data)} reminders")
-        else:
-            print_test("List all reminders", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List all reminders", False, f"Error: {str(e)}")
-    
-    # List reminders by status
-    try:
-        response = requests.get(f"{BASE_URL}/reminders?status=pending", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            print_test("List reminders by status", True, f"Found {len(data)} pending reminders")
-        else:
-            print_test("List reminders by status", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List reminders by status", False, f"Error: {str(e)}")
-    
-    # Update reminder
-    if test_data["reminder_id"]:
-        try:
-            payload = {
-                "status": "done"
-            }
-            response = requests.put(f"{BASE_URL}/reminders/{test_data['reminder_id']}", json=payload, timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                correct_status = data.get("status") == "done"
-                print_test("Update reminder", correct_status, "Status updated to 'done'")
-            else:
-                print_test("Update reminder", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Update reminder", False, f"Error: {str(e)}")
-    
-    # Delete reminder
-    if test_data["reminder_id"]:
-        try:
-            response = requests.delete(f"{BASE_URL}/reminders/{test_data['reminder_id']}", timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                print_test("Delete reminder", data.get("ok") == True, "Reminder deleted successfully")
-            else:
-                print_test("Delete reminder", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Delete reminder", False, f"Error: {str(e)}")
-
-def test_daily_briefing():
-    """Test 7: Daily Briefing endpoint"""
-    print_section("7. DAILY BRIEFING")
-    
-    try:
-        # Test without location
-        response = requests.get(f"{BASE_URL}/briefing", timeout=15)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_greeting = "greeting" in data
-            has_reminders = "pending_reminders" in data
-            has_goals = "active_goals" in data
-            has_integrations = "integrations" in data
-            
-            passed = has_greeting and has_reminders and has_goals and has_integrations
-            print_test("Daily briefing (no location)", passed, 
-                     f"Greeting: {data.get('greeting', 'N/A')}")
-            
-            if has_integrations:
-                integrations = data.get("integrations", {})
-                google_cal = integrations.get("google_calendar", {})
-                gmail = integrations.get("gmail", {})
-                print_test("Briefing includes integrations", True, 
-                         f"Google Calendar: {google_cal.get('connected', False)}, Gmail: {gmail.get('connected', False)}")
-        else:
-            print_test("Daily briefing (no location)", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Daily briefing (no location)", False, f"Error: {str(e)}")
-    
-    # Test with location (San Francisco coordinates)
-    try:
-        response = requests.get(f"{BASE_URL}/briefing?lat=37.7749&lon=-122.4194&tz_offset=-480", timeout=15)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_weather = data.get("weather") is not None
-            if has_weather:
-                weather = data.get("weather", {})
-                print_test("Daily briefing with weather", True, 
-                         f"Temp: {weather.get('temperature_c')}°C, {weather.get('summary')}")
-            else:
-                print_test("Daily briefing with weather", True, "Weather data not available (API may be down)")
-        else:
-            print_test("Daily briefing with weather", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Daily briefing with weather", False, f"Error: {str(e)}")
-
-def test_google_integration():
-    """Test 8: Google Integration endpoints"""
-    print_section("8. GOOGLE INTEGRATION")
-    
-    # Check Google status
-    try:
-        response = requests.get(f"{BASE_URL}/google/status", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            is_connected = data.get("connected", False)
-            email = data.get("email", "Not connected")
-            print_test("Google connection status", True, 
-                     f"Connected: {is_connected}, Email: {email}")
-            
-            # Store connection status for later tests
-            test_data["google_connected"] = is_connected
-        else:
-            print_test("Google connection status", False, f"Status: {response.status_code}")
-            test_data["google_connected"] = False
-    except Exception as e:
-        print_test("Google connection status", False, f"Error: {str(e)}")
-        test_data["google_connected"] = False
-    
-    # Get auth URL
-    try:
-        response = requests.get(f"{BASE_URL}/google/auth-url", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_url = "url" in data and data["url"].startswith("https://accounts.google.com")
-            print_test("Google auth URL", has_url, "OAuth URL generated successfully")
-        else:
-            print_test("Google auth URL", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Google auth URL", False, f"Error: {str(e)}")
-    
-    # Test Calendar endpoints (only if connected)
-    if test_data.get("google_connected"):
-        try:
-            response = requests.get(f"{BASE_URL}/calendar/upcoming?limit=5", timeout=15)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                events = data.get("events", [])
-                print_test("Google Calendar - upcoming events", True, 
-                         f"Found {len(events)} upcoming events")
-            else:
-                print_test("Google Calendar - upcoming events", False, 
-                         f"Status: {response.status_code}, Response: {response.text[:200]}")
-        except Exception as e:
-            print_test("Google Calendar - upcoming events", False, f"Error: {str(e)}")
-        
-        # Test Gmail endpoints
-        try:
-            response = requests.get(f"{BASE_URL}/gmail/recent?limit=5", timeout=15)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                messages = data.get("messages", [])
-                print_test("Gmail - recent emails", True, 
-                         f"Found {len(messages)} recent emails")
-            else:
-                print_test("Gmail - recent emails", False, 
-                         f"Status: {response.status_code}, Response: {response.text[:200]}")
-        except Exception as e:
-            print_test("Gmail - recent emails", False, f"Error: {str(e)}")
-    else:
-        print(f"  {Colors.YELLOW}⊘ Skipping Calendar/Gmail tests - Google not connected{Colors.END}")
-
-def test_notifications():
-    """Test 9: Notifications endpoints"""
-    print_section("9. NOTIFICATIONS")
-    
-    # Ingest notification
-    try:
-        payload = {
-            "package_name": "com.phonepe.app",
-            "title": "Payment Received",
-            "text": "You received ₹500 from John Doe",
-            "posted_at": datetime.now(timezone.utc).isoformat()
-        }
-        response = requests.post(f"{BASE_URL}/notifications/ingest", json=payload, timeout=15)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            test_data["notification_id"] = data.get("id")
-            has_id = "id" in data
-            has_kind = "kind" in data
-            kind = data.get("kind", "unknown")
-            
-            passed = has_id and has_kind
-            print_test("Ingest notification", passed, 
-                     f"Notification ID: {test_data['notification_id']}, Kind: {kind}")
-            
-            # Check if transaction was detected
-            if kind == "transaction":
-                amount = data.get("amount")
-                currency = data.get("currency")
-                direction = data.get("direction")
-                print_test("Transaction detection", True, 
-                         f"Amount: {amount} {currency}, Direction: {direction}")
-        else:
-            print_test("Ingest notification", False, 
-                     f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Ingest notification", False, f"Error: {str(e)}")
-    
-    # List notifications
-    try:
-        response = requests.get(f"{BASE_URL}/notifications?limit=10", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            is_list = isinstance(data, list)
-            print_test("List notifications", is_list, f"Found {len(data)} notifications")
-        else:
-            print_test("List notifications", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List notifications", False, f"Error: {str(e)}")
-    
-    # List notifications by kind
-    try:
-        response = requests.get(f"{BASE_URL}/notifications?kind=transaction&limit=10", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            print_test("List notifications by kind", True, 
-                     f"Found {len(data)} transaction notifications")
-        else:
-            print_test("List notifications by kind", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List notifications by kind", False, f"Error: {str(e)}")
-    
-    # Delete notification
-    if test_data["notification_id"]:
-        try:
-            response = requests.delete(f"{BASE_URL}/notifications/{test_data['notification_id']}", timeout=10)
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                print_test("Delete notification", data.get("ok") == True, "Notification deleted successfully")
-            else:
-                print_test("Delete notification", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Delete notification", False, f"Error: {str(e)}")
-
-def test_chat_with_tools():
-    """Test 10: Tool-enabled Chat - POST /api/chat/tools"""
-    print_section("10. TOOL-ENABLED CHAT")
-    
-    # First create a session for tool chat
-    tool_session_id = str(uuid.uuid4())
-    
-    try:
-        payload = {
-            "session_id": tool_session_id,
-            "message": "What is 25% of 150?",
-            "use_tools": True
-        }
-        response = requests.post(f"{BASE_URL}/chat/tools", json=payload, timeout=30)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_session = "session_id" in data
-            has_user_msg = "user_message" in data
-            has_assistant_msg = "assistant_message" in data
-            has_tool_calls = "tool_calls" in data
-            
-            passed = has_session and has_user_msg and has_assistant_msg
-            
-            # Check if calculator tool was called
-            tool_calls = data.get("tool_calls", [])
-            calculator_called = any(tc.get("tool_name") == "calculator" for tc in tool_calls)
-            
-            details = f"Response length: {len(data.get('assistant_message', {}).get('content', ''))} chars"
-            if tool_calls:
-                details += f", Tool calls: {len(tool_calls)}"
-                if calculator_called:
-                    details += " (calculator used)"
-            
-            print_test("Tool-enabled chat endpoint", passed, details)
-            
-            if calculator_called:
-                print_test("Calculator tool invoked", True, "Calculator tool was called for math question")
-            else:
-                print_test("Calculator tool invoked", False, "Calculator tool was NOT called (expected for math question)")
-                
-        else:
-            print_test("Tool-enabled chat endpoint", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Tool-enabled chat endpoint", False, f"Error: {str(e)}")
-
-def test_web_search():
-    """Test 11: Web Search - POST /api/search/web"""
-    print_section("11. WEB SEARCH")
-    
-    try:
-        payload = {"query": "Eiffel Tower height"}
-        response = requests.post(f"{BASE_URL}/search/web", json=payload, timeout=30)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_results = "results" in data or "answer" in data or isinstance(data, dict)
-            
-            details = f"Response keys: {list(data.keys())}"
-            if "results" in data:
-                results_count = len(data.get("results", []))
-                details += f", Results count: {results_count}"
-            
-            print_test("Web search endpoint", passed, details)
-        else:
-            print_test("Web search endpoint", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Web search endpoint", False, f"Error: {str(e)}")
-
-def test_knowledge_vault():
-    """Test 12: Knowledge Vault endpoints"""
-    print_section("12. KNOWLEDGE VAULT")
-    
-    # Get knowledge stats
-    try:
-        response = requests.get(f"{BASE_URL}/knowledge/stats", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_stats = isinstance(data, dict)
-            details = f"Stats keys: {list(data.keys())}"
-            print_test("Get knowledge stats", passed, details)
-        else:
-            print_test("Get knowledge stats", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get knowledge stats", False, f"Error: {str(e)}")
-    
-    # List knowledge documents
-    try:
-        response = requests.get(f"{BASE_URL}/knowledge/documents", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_documents = "documents" in data
-            has_total = "total" in data
-            
-            passed = has_documents and has_total
-            doc_count = len(data.get("documents", []))
-            total = data.get("total", 0)
-            
-            print_test("List knowledge documents", passed, f"Documents: {doc_count}, Total: {total}")
-        else:
-            print_test("List knowledge documents", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List knowledge documents", False, f"Error: {str(e)}")
-
-def test_phone_calls():
-    """Test 13: Phone Calls (Mock) endpoints"""
-    print_section("13. PHONE CALLS (MOCK)")
-    
-    call_id = None
-    
-    # Create a mock phone call
-    try:
-        payload = {
-            "phone_number": "+1234567890",
-            "purpose": "Schedule appointment"
-        }
-        response = requests.post(f"{BASE_URL}/calls", json=payload, timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_id = "id" in data or "call_id" in data
-            call_id = data.get("id") or data.get("call_id")
-            
-            details = f"Call ID: {call_id}" if call_id else "Call created"
-            print_test("Create phone call", passed, details)
-        else:
-            print_test("Create phone call", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Create phone call", False, f"Error: {str(e)}")
-    
-    # List phone calls
-    try:
-        response = requests.get(f"{BASE_URL}/calls", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_calls = "calls" in data
-            has_total = "total" in data
-            
-            passed = has_calls and has_total
-            calls_count = len(data.get("calls", []))
-            total = data.get("total", 0)
-            
-            print_test("List phone calls", passed, f"Calls: {calls_count}, Total: {total}")
-        else:
-            print_test("List phone calls", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List phone calls", False, f"Error: {str(e)}")
-    
-    # Get call stats summary
-    try:
-        response = requests.get(f"{BASE_URL}/calls/stats/summary", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_stats = isinstance(data, dict)
-            details = f"Stats keys: {list(data.keys())}"
-            print_test("Get call stats summary", passed, details)
-        else:
-            print_test("Get call stats summary", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get call stats summary", False, f"Error: {str(e)}")
-
-def test_dashboard():
-    """Test 14: Dashboard endpoints"""
-    print_section("14. DASHBOARD")
-    
-    # Get full dashboard
-    try:
-        response = requests.get(f"{BASE_URL}/dashboard", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_data = isinstance(data, dict)
-            details = f"Dashboard keys: {list(data.keys())}"
-            print_test("Get full dashboard", passed, details)
-        else:
-            print_test("Get full dashboard", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get full dashboard", False, f"Error: {str(e)}")
-    
-    # Get usage stats
-    try:
-        response = requests.get(f"{BASE_URL}/dashboard/usage", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_stats = isinstance(data, dict)
-            details = f"Usage stats keys: {list(data.keys())}"
-            print_test("Get usage stats", passed, details)
-        else:
-            print_test("Get usage stats", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get usage stats", False, f"Error: {str(e)}")
-    
-    # Get spending insights
-    try:
-        response = requests.get(f"{BASE_URL}/dashboard/spending", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_insights = isinstance(data, dict)
-            details = f"Spending insights keys: {list(data.keys())}"
-            print_test("Get spending insights", passed, details)
-        else:
-            print_test("Get spending insights", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get spending insights", False, f"Error: {str(e)}")
-
-def test_elevenlabs_voice():
-    """Test 16: ElevenLabs Voice Integration"""
-    print_section("16. ELEVENLABS VOICE")
-    
-    # Test 1: Voice Status
-    try:
-        response = requests.get(f"{BASE_URL}/voice/status", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            is_enabled = data.get("enabled", False)
-            has_voice_id = "voice_id" in data if is_enabled else True
-            
-            if is_enabled:
-                voice_id = data.get("voice_id", "")
-                voice_info = data.get("voice_info", {})
-                details = f"Enabled: {is_enabled}, Voice ID: {voice_id[:8]}..., Voice Name: {voice_info.get('name', 'N/A')}"
-                print_test("Get voice status", passed, details)
-            else:
-                print_test("Get voice status", passed, f"ElevenLabs not configured (expected in test environment)")
-        else:
-            print_test("Get voice status", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get voice status", False, f"Error: {str(e)}")
-    
-    # Test 2: Text-to-Speech
-    try:
-        payload = {"text": "Hello from Nova"}
-        response = requests.post(f"{BASE_URL}/voice/tts", json=payload, timeout=30)
-        
-        # If ElevenLabs is configured, should return 200 with audio
-        # If not configured, should return 400
-        if response.status_code == 200:
-            data = response.json()
-            has_audio = "audio_base64" in data
-            has_format = data.get("format") == "mp3"
-            text_length = data.get("text_length", 0)
-            
-            passed = has_audio and has_format and text_length > 0
-            details = f"Audio generated: {len(data.get('audio_base64', '')) > 0}, Format: {data.get('format')}, Text length: {text_length}"
-            print_test("Text-to-speech conversion", passed, details)
-        elif response.status_code == 400:
-            # Expected if ElevenLabs not configured
-            print_test("Text-to-speech conversion", True, "ElevenLabs not configured (expected in test environment)")
-        else:
-            print_test("Text-to-speech conversion", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Text-to-speech conversion", False, f"Error: {str(e)}")
-    
-    # Test 3: List Voices
-    try:
-        response = requests.get(f"{BASE_URL}/voice/voices", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            voices = data.get("voices", [])
-            details = f"Available voices: {len(voices)}"
-            print_test("List available voices", passed, details)
-        else:
-            print_test("List available voices", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List available voices", False, f"Error: {str(e)}")
-
-
-def test_incoming_calls():
-    """Test 17: Incoming Call Management"""
-    print_section("17. INCOMING CALL MANAGEMENT")
-    
-    # Test 1: Register Incoming Call
-    try:
-        payload = {
-            "phone_number": "+919876543210",
-            "contact_name": "Mom"
-        }
-        response = requests.post(f"{BASE_URL}/incoming-calls/register", json=payload, timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            test_data["call_id"] = data.get("id")
-            has_id = "id" in data
-            has_phone = data.get("phone_number") == "+919876543210"
-            has_contact = data.get("contact_name") == "Mom"
-            status_is_ringing = data.get("status") == "ringing"
-            
-            passed = has_id and has_phone and has_contact and status_is_ringing
-            details = f"Call ID: {test_data['call_id']}, Phone: {data.get('phone_number')}, Contact: {data.get('contact_name')}, Status: {data.get('status')}"
-            print_test("Register incoming call", passed, details)
-        else:
-            print_test("Register incoming call", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-    except Exception as e:
-        print_test("Register incoming call", False, f"Error: {str(e)}")
-    
-    # Test 2: Get Active Call
-    try:
-        response = requests.get(f"{BASE_URL}/incoming-calls/active", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            call = data.get("call")
-            if call:
-                is_active = call.get("status") in ["ringing", "answered"]
-                details = f"Active call found: {call.get('phone_number')}, Status: {call.get('status')}"
-                print_test("Get active call", passed and is_active, details)
-            else:
-                print_test("Get active call", True, "No active call (expected if call was ended)")
-        else:
-            print_test("Get active call", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get active call", False, f"Error: {str(e)}")
-    
-    # Test 3: Answer Call with AI
-    if test_data["call_id"]:
-        try:
-            response = requests.post(
-                f"{BASE_URL}/incoming-calls/{test_data['call_id']}/answer?ai_answer=true",
-                timeout=30
-            )
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                call = data.get("call")
-                has_call = call is not None
-                is_answered = call.get("status") == "answered" if call else False
-                ai_answered = call.get("ai_answered", False) if call else False
-                has_greeting = "greeting_audio_base64" in data or "greeting_text" in data
-                
-                passed = has_call and is_answered and ai_answered
-                details = f"Status: {call.get('status') if call else 'N/A'}, AI Answered: {ai_answered}, Has Greeting: {has_greeting}"
-                print_test("Answer call with AI", passed, details)
-            else:
-                print_test("Answer call with AI", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
-        except Exception as e:
-            print_test("Answer call with AI", False, f"Error: {str(e)}")
-    
-    # Test 4: End Call
-    if test_data["call_id"]:
-        try:
-            response = requests.post(
-                f"{BASE_URL}/incoming-calls/{test_data['call_id']}/end",
-                timeout=10
-            )
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                call = data.get("call")
-                is_ended = call.get("status") == "ended" if call else False
-                has_duration = call.get("duration_seconds", 0) >= 0 if call else False
-                
-                passed = is_ended and has_duration
-                details = f"Status: {call.get('status') if call else 'N/A'}, Duration: {call.get('duration_seconds', 0)}s"
-                print_test("End call", passed, details)
-            else:
-                print_test("End call", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("End call", False, f"Error: {str(e)}")
-    
-    # Test 5: List All Calls
-    try:
-        response = requests.get(f"{BASE_URL}/incoming-calls", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            calls = data.get("calls", [])
-            details = f"Total calls: {len(calls)}"
-            print_test("List all calls", passed, details)
-        else:
-            print_test("List all calls", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("List all calls", False, f"Error: {str(e)}")
-    
-    # Test 6: Get Call Stats
-    try:
-        response = requests.get(f"{BASE_URL}/incoming-calls/stats", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            has_total = "total_calls" in data
-            has_missed = "missed_calls" in data
-            has_answered = "answered_calls" in data
-            
-            passed = has_total and has_missed and has_answered
-            details = f"Total: {data.get('total_calls', 0)}, Missed: {data.get('missed_calls', 0)}, Answered: {data.get('answered_calls', 0)}, AI Answered: {data.get('ai_answered_calls', 0)}"
-            print_test("Get call statistics", passed, details)
-        else:
-            print_test("Get call statistics", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get call statistics", False, f"Error: {str(e)}")
-
-
-def test_missed_calls():
-    """Test 18: Missed Call Reminders"""
-    print_section("18. MISSED CALL REMINDERS")
-    
-    # Test 1: Register and Mark Call as Missed
-    try:
-        # First register a new call
-        payload = {
-            "phone_number": "+919123456789",
-            "contact_name": "Dad"
-        }
-        response = requests.post(f"{BASE_URL}/incoming-calls/register", json=payload, timeout=10)
-        
-        if response.status_code == 200:
-            call_data = response.json()
-            missed_call_id = call_data.get("id")
-            
-            # Mark it as missed
-            response = requests.post(
-                f"{BASE_URL}/incoming-calls/{missed_call_id}/missed",
-                timeout=10
-            )
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                call = data.get("call")
-                is_missed = call.get("status") == "missed" if call else False
-                reminder_created = data.get("reminder_created", False)
-                
-                passed = is_missed and reminder_created
-                details = f"Status: {call.get('status') if call else 'N/A'}, Reminder Created: {reminder_created}"
-                print_test("Mark call as missed", passed, details)
-            else:
-                print_test("Mark call as missed", False, f"Status: {response.status_code}")
-        else:
-            print_test("Mark call as missed", False, f"Failed to register call: {response.status_code}")
-    except Exception as e:
-        print_test("Mark call as missed", False, f"Error: {str(e)}")
-    
-    # Test 2: Get Missed Call Reminders
-    try:
-        response = requests.get(f"{BASE_URL}/missed-calls?status=pending", timeout=10)
-        passed = response.status_code == 200
-        
-        if passed:
-            data = response.json()
-            reminders = data.get("reminders", [])
-            
-            if len(reminders) > 0:
-                test_data["missed_call_reminder_id"] = reminders[0].get("id")
-                reminder = reminders[0]
-                has_phone = "phone_number" in reminder
-                has_status = reminder.get("status") == "pending"
-                
-                passed = has_phone and has_status
-                details = f"Pending reminders: {len(reminders)}, Phone: {reminder.get('phone_number')}, Contact: {reminder.get('contact_name', 'N/A')}"
-                print_test("Get missed call reminders", passed, details)
-            else:
-                print_test("Get missed call reminders", True, "No pending reminders found")
-        else:
-            print_test("Get missed call reminders", False, f"Status: {response.status_code}")
-    except Exception as e:
-        print_test("Get missed call reminders", False, f"Error: {str(e)}")
-    
-    # Test 3: Dismiss Reminder
-    if test_data["missed_call_reminder_id"]:
-        try:
-            response = requests.post(
-                f"{BASE_URL}/missed-calls/{test_data['missed_call_reminder_id']}/dismiss",
-                timeout=10
-            )
-            passed = response.status_code == 200
-            
-            if passed:
-                data = response.json()
-                is_ok = data.get("ok", False)
-                details = f"Reminder dismissed: {is_ok}"
-                print_test("Dismiss missed call reminder", passed and is_ok, details)
-            else:
-                print_test("Dismiss missed call reminder", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Dismiss missed call reminder", False, f"Error: {str(e)}")
-
-def cleanup_test_data():
-    """Clean up test data created during testing"""
-    print_section("CLEANUP")
-    
-    # Delete test session
-    if test_data["session_id"]:
-        try:
-            response = requests.delete(f"{BASE_URL}/sessions/{test_data['session_id']}", timeout=10)
-            if response.status_code == 200:
-                print_test("Cleanup test session", True, f"Session {test_data['session_id']} deleted")
-            else:
-                print_test("Cleanup test session", False, f"Status: {response.status_code}")
-        except Exception as e:
-            print_test("Cleanup test session", False, f"Error: {str(e)}")
+        return False, f"Error: {str(e)}"
 
 def main():
-    print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
-    print(f"{Colors.BLUE}Nova AI Assistant - Backend API Test Suite{Colors.END}")
-    print(f"{Colors.BLUE}Testing URL: {BASE_URL}{Colors.END}")
-    print(f"{Colors.BLUE}{'='*60}{Colors.END}")
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}Nova AI Assistant - Advanced Features Testing{RESET}")
+    print(f"{BLUE}Testing Backend: {BASE_URL}{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}\n")
     
-    # Run all tests
-    test_health_check()
-    test_sessions_crud()
-    test_chat_endpoint()
-    test_memories_crud()
-    test_goals_crud()
-    test_reminders_crud()
-    test_daily_briefing()
-    test_google_integration()
-    test_notifications()
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = []
     
-    # NEW FEATURE TESTS
-    test_chat_with_tools()
-    test_web_search()
-    test_knowledge_vault()
-    test_phone_calls()
-    test_dashboard()
+    # ==================== PERSONAL FINANCE BRAIN ====================
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}1. PERSONAL FINANCE BRAIN{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}\n")
     
-    # ELEVENLABS VOICE & INCOMING CALLS TESTS
-    test_elevenlabs_voice()
-    test_incoming_calls()
-    test_missed_calls()
+    # Test 1: Process Bank Notification
+    total_tests += 1
+    test_name = "Process Bank Notification (POST /finance/process-notification)"
+    notification_data = {
+        "title": "HDFC Bank",
+        "text": "Rs.750 debited to Zomato via UPI on 18-Jun-26. Ref: 123456789",
+        "app_name": "HDFC"
+    }
+    success, result = test_endpoint("POST", "/finance/process-notification", notification_data, 200, test_name)
+    if success:
+        if result.get("is_transaction") and result.get("transaction"):
+            tx = result["transaction"]
+            if tx.get("amount") == 750 and tx.get("direction") == "debit" and tx.get("category"):
+                print_test(test_name, "PASS", f"Transaction detected: ₹{tx['amount']} to {tx.get('merchant', 'Unknown')} (Category: {tx.get('category')})")
+                passed_tests += 1
+            else:
+                print_test(test_name, "FAIL", f"Transaction data incomplete or incorrect: {tx}")
+                failed_tests.append(test_name)
+        else:
+            print_test(test_name, "FAIL", f"Transaction not detected: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
     
-    # Cleanup
-    cleanup_test_data()
+    # Test 2: Get Spending Summary
+    total_tests += 1
+    test_name = "Get Spending Summary (GET /finance/spending-summary)"
+    success, result = test_endpoint("GET", "/finance/spending-summary?days=30", None, 200, test_name)
+    if success:
+        if "has_data" in result:
+            if result["has_data"]:
+                summary = result.get("summary", {})
+                print_test(test_name, "PASS", f"Summary: ₹{summary.get('total_spent', 0)} spent, {summary.get('transaction_count', 0)} transactions")
+                passed_tests += 1
+            else:
+                print_test(test_name, "PASS", f"No data yet: {result.get('message', 'No transactions')}")
+                passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Invalid response structure: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
     
-    print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
-    print(f"{Colors.BLUE}Testing Complete{Colors.END}")
-    print(f"{Colors.BLUE}{'='*60}{Colors.END}\n")
+    # Test 3: Get Spending Insights
+    total_tests += 1
+    test_name = "Get Spending Insights (GET /finance/insights)"
+    success, result = test_endpoint("GET", "/finance/insights?days=30", None, 200, test_name)
+    if success:
+        if isinstance(result, list):
+            print_test(test_name, "PASS", f"Insights: {len(result)} insights generated")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Expected list, got: {type(result)}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 4: Get Category Breakdown
+    total_tests += 1
+    test_name = "Get Category Breakdown (GET /finance/categories)"
+    success, result = test_endpoint("GET", "/finance/categories?days=30", None, 200, test_name)
+    if success:
+        if "categories" in result and isinstance(result["categories"], list):
+            print_test(test_name, "PASS", f"Categories: {len(result['categories'])} categories found")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Invalid response structure: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 5: Get Recurring Transactions
+    total_tests += 1
+    test_name = "Get Recurring Transactions (GET /finance/recurring)"
+    success, result = test_endpoint("GET", "/finance/recurring", None, 200, test_name)
+    if success:
+        if isinstance(result, list):
+            print_test(test_name, "PASS", f"Recurring: {len(result)} recurring transactions detected")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Expected list, got: {type(result)}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # ==================== PERSONAL DIGITAL TWIN ====================
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}2. PERSONAL DIGITAL TWIN{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}\n")
+    
+    # Test 6: Get User Profile
+    total_tests += 1
+    test_name = "Get User Profile (GET /twin/profile)"
+    success, result = test_endpoint("GET", "/twin/profile", None, 200, test_name)
+    if success:
+        if "writing_style" in result and "priorities" in result:
+            ws = result["writing_style"]
+            print_test(test_name, "PASS", f"Profile: Formality={ws.get('formality', 0):.2f}, Verbosity={ws.get('verbosity', 0):.2f}")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Invalid profile structure: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 7: Learn from Message
+    total_tests += 1
+    test_name = "Learn from Message (POST /twin/learn)"
+    learn_data = {
+        "message": "Hey! Thanks so much for the help 😊 Really appreciate it!",
+        "context": "chat"
+    }
+    success, result = test_endpoint("POST", "/twin/learn", learn_data, 200, test_name)
+    if success:
+        if result.get("learned"):
+            updates = result.get("updates", {})
+            print_test(test_name, "PASS", f"Learned: Formality={updates.get('formality')}, Emoji={updates.get('emoji_usage')}")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Learning failed: {result.get('reason', 'Unknown')}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 8: Get Style Prompt
+    total_tests += 1
+    test_name = "Get Style Prompt (GET /twin/style-prompt)"
+    success, result = test_endpoint("GET", "/twin/style-prompt", None, 200, test_name)
+    if success:
+        if "style_prompt" in result and isinstance(result["style_prompt"], str):
+            prompt = result["style_prompt"]
+            print_test(test_name, "PASS", f"Style: {prompt[:80]}...")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Invalid response: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 9: Track Contact Interaction
+    total_tests += 1
+    test_name = "Track Contact Interaction (POST /twin/contact-interaction)"
+    contact_data = {
+        "contact_name": "Vijay Kumar",
+        "relationship": "colleague"
+    }
+    success, result = test_endpoint("POST", "/twin/contact-interaction", contact_data, 200, test_name)
+    if success:
+        if result.get("ok"):
+            print_test(test_name, "PASS", "Contact interaction tracked successfully")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Unexpected response: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 10: Learn Response Template
+    total_tests += 1
+    test_name = "Learn Response Template (POST /twin/learn-response)"
+    template_data = {
+        "context": "meeting_invite",
+        "response": "Thanks for the invite! Let me check my calendar and get back to you shortly."
+    }
+    success, result = test_endpoint("POST", "/twin/learn-response", template_data, 200, test_name)
+    if success:
+        if result.get("ok"):
+            print_test(test_name, "PASS", "Response template learned successfully")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Unexpected response: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # ==================== AI CHIEF OF STAFF ====================
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}3. AI CHIEF OF STAFF{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}\n")
+    
+    # Test 11: Get Morning Briefing
+    total_tests += 1
+    test_name = "Get Morning Briefing (GET /chief/morning-briefing)"
+    success, result = test_endpoint("GET", "/chief/morning-briefing?tz_offset=0", None, 200, test_name)
+    if success:
+        if "greeting" in result and "sections" in result and "suggested_plan" in result:
+            greeting = result.get("greeting", "")
+            sections = result.get("sections", [])
+            plan = result.get("suggested_plan", [])
+            print_test(test_name, "PASS", f"Briefing: {greeting}, {len(sections)} sections, {len(plan)} plan items")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Invalid briefing structure: {result}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # Test 12: Get Smart Suggestions
+    total_tests += 1
+    test_name = "Get Smart Suggestions (GET /chief/suggestions)"
+    success, result = test_endpoint("GET", "/chief/suggestions?context=", None, 200, test_name)
+    if success:
+        if isinstance(result, list):
+            print_test(test_name, "PASS", f"Suggestions: {len(result)} smart suggestions generated")
+            passed_tests += 1
+        else:
+            print_test(test_name, "FAIL", f"Expected list, got: {type(result)}")
+            failed_tests.append(test_name)
+    else:
+        print_test(test_name, "FAIL", result)
+        failed_tests.append(test_name)
+    
+    # ==================== SUMMARY ====================
+    print(f"\n{BLUE}{'='*70}{RESET}")
+    print(f"{BLUE}TEST SUMMARY{RESET}")
+    print(f"{BLUE}{'='*70}{RESET}\n")
+    
+    print(f"Total Tests: {total_tests}")
+    print(f"{GREEN}Passed: {passed_tests}{RESET}")
+    print(f"{RED}Failed: {len(failed_tests)}{RESET}")
+    print(f"Success Rate: {(passed_tests/total_tests*100):.1f}%\n")
+    
+    if failed_tests:
+        print(f"{RED}Failed Tests:{RESET}")
+        for i, test in enumerate(failed_tests, 1):
+            print(f"  {i}. {test}")
+        print()
+        return 1
+    else:
+        print(f"{GREEN}✓ All tests passed!{RESET}\n")
+        return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

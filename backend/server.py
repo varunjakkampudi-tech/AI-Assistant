@@ -9,7 +9,7 @@ import logging
 import tempfile
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 import uuid
 from datetime import datetime, timezone
 import httpx
@@ -23,6 +23,9 @@ import phone_calls as pc
 import dashboard as dash
 import elevenlabs_voice as el_voice
 import call_manager as cm
+import finance_brain as fb
+import digital_twin as dt
+import chief_of_staff as cos
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -1548,6 +1551,175 @@ async def parse_call_command(message: str):
     """Parse a message for call-related commands."""
     command = cm.parse_call_command(message)
     return {"command": command}
+
+
+# ==================== PERSONAL FINANCE BRAIN ====================
+
+# Initialize finance brain
+_finance_brain: fb.PersonalFinanceBrain = None
+
+def get_finance_brain() -> fb.PersonalFinanceBrain:
+    global _finance_brain
+    if _finance_brain is None:
+        _finance_brain = fb.PersonalFinanceBrain(db)
+    return _finance_brain
+
+
+class BankNotificationRequest(BaseModel):
+    title: str
+    text: str
+    app_name: str = ""
+
+
+@api_router.post("/finance/process-notification")
+async def process_bank_notification(body: BankNotificationRequest):
+    """Process a banking notification and extract transaction data."""
+    brain = get_finance_brain()
+    return await brain.process_notification(body.title, body.text, body.app_name)
+
+
+@api_router.get("/finance/spending-summary")
+async def get_spending_summary(days: int = 30):
+    """Get comprehensive spending summary."""
+    brain = get_finance_brain()
+    return await brain.get_spending_summary(days)
+
+
+@api_router.get("/finance/insights")
+async def get_spending_insights(days: int = 30):
+    """Get AI-powered spending insights."""
+    brain = get_finance_brain()
+    return await brain.get_spending_insights(days)
+
+
+@api_router.get("/finance/categories")
+async def get_category_breakdown(days: int = 30):
+    """Get spending breakdown by category."""
+    brain = get_finance_brain()
+    return await brain.get_category_breakdown(days)
+
+
+@api_router.get("/finance/recurring")
+async def get_recurring_transactions():
+    """Detect recurring transactions (subscriptions, EMIs)."""
+    brain = get_finance_brain()
+    return await brain.get_recurring_transactions()
+
+
+# ==================== PERSONAL DIGITAL TWIN ====================
+
+# Initialize digital twin
+_digital_twin: dt.PersonalDigitalTwin = None
+
+def get_digital_twin() -> dt.PersonalDigitalTwin:
+    global _digital_twin
+    if _digital_twin is None:
+        _digital_twin = dt.PersonalDigitalTwin(db)
+    return _digital_twin
+
+
+@api_router.get("/twin/profile")
+async def get_user_profile():
+    """Get the user's digital twin profile."""
+    twin = get_digital_twin()
+    return await twin.get_profile()
+
+
+class LearnMessageRequest(BaseModel):
+    message: str
+    context: str = "chat"
+
+
+@api_router.post("/twin/learn")
+async def learn_from_message(body: LearnMessageRequest):
+    """Learn from a user message to update the digital twin."""
+    twin = get_digital_twin()
+    return await twin.learn_from_message(body.message, body.context)
+
+
+class ContactInteractionRequest(BaseModel):
+    contact_name: str
+    relationship: str = "unknown"
+
+
+@api_router.post("/twin/contact-interaction")
+async def track_contact_interaction(body: ContactInteractionRequest):
+    """Track interaction with a contact."""
+    twin = get_digital_twin()
+    await twin.learn_contact_interaction(body.contact_name, body.relationship)
+    return {"ok": True}
+
+
+class ResponseTemplateRequest(BaseModel):
+    context: str
+    response: str
+
+
+@api_router.post("/twin/learn-response")
+async def learn_response_template(body: ResponseTemplateRequest):
+    """Learn a response template for a specific context."""
+    twin = get_digital_twin()
+    await twin.learn_response_template(body.context, body.response)
+    return {"ok": True}
+
+
+@api_router.get("/twin/style-prompt")
+async def get_style_prompt():
+    """Get a prompt describing the user's communication style."""
+    twin = get_digital_twin()
+    prompt = await twin.get_style_prompt()
+    return {"style_prompt": prompt}
+
+
+class ReplySuggestionRequest(BaseModel):
+    to_contact: str
+    context: str
+
+
+@api_router.post("/twin/suggest-reply")
+async def suggest_reply(body: ReplySuggestionRequest):
+    """Get a reply suggestion in the user's style."""
+    twin = get_digital_twin()
+    suggestion = await twin.generate_reply_suggestion(body.to_contact, body.context)
+    return {"suggestion": suggestion}
+
+
+class PrioritiesUpdateRequest(BaseModel):
+    priorities: Dict[str, float]
+
+
+@api_router.post("/twin/update-priorities")
+async def update_priorities(body: PrioritiesUpdateRequest):
+    """Update user's priorities."""
+    twin = get_digital_twin()
+    await twin.update_priorities(body.priorities)
+    return {"ok": True}
+
+
+# ==================== AI CHIEF OF STAFF ====================
+
+# Initialize chief of staff
+_chief_of_staff: cos.AIChiefOfStaff = None
+
+def get_chief_of_staff() -> cos.AIChiefOfStaff:
+    global _chief_of_staff
+    if _chief_of_staff is None:
+        _chief_of_staff = cos.AIChiefOfStaff(db, gh)
+    return _chief_of_staff
+
+
+@api_router.get("/chief/morning-briefing")
+async def get_morning_briefing(tz_offset: int = 0):
+    """Get comprehensive morning briefing with proactive suggestions."""
+    chief = get_chief_of_staff()
+    return await chief.generate_morning_briefing(tz_offset)
+
+
+@api_router.get("/chief/suggestions")
+async def get_smart_suggestions(context: str = ""):
+    """Get AI-powered suggestions based on current context."""
+    chief = get_chief_of_staff()
+    return await chief.get_smart_suggestions(context)
 
 
 app.include_router(api_router)
