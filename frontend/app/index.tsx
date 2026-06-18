@@ -13,6 +13,7 @@ import {
   Share,
   ScrollView,
   Image as RNImage,
+  Linking,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -59,6 +60,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -175,7 +177,14 @@ export default function ChatScreen() {
         });
         if (ttsEnabled && res.assistant_message?.content) {
           Speech.stop();
-          Speech.speak(res.assistant_message.content, { rate: 1.0, pitch: 1.0 });
+          setIsSpeaking(true);
+          Speech.speak(res.assistant_message.content, {
+            rate: 1.0,
+            pitch: 1.0,
+            onDone: () => setIsSpeaking(false),
+            onStopped: () => setIsSpeaking(false),
+            onError: () => setIsSpeaking(false),
+          });
         }
       } catch (e: any) {
         setError(String(e?.message || e));
@@ -196,12 +205,18 @@ export default function ChatScreen() {
       }
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
       Speech.stop();
+      setIsSpeaking(false);
       await recorder.prepareToRecordAsync();
       recorder.record();
     } catch (e: any) {
       setError(`Recording error: ${e?.message || e}`);
     }
   }, [recorder]);
+
+  const interruptSpeech = useCallback(() => {
+    Speech.stop();
+    setIsSpeaking(false);
+  }, []);
 
   const stopRecording = useCallback(async () => {
     try {
@@ -249,6 +264,11 @@ export default function ChatScreen() {
 
   const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
     if (item.role === "user") {
+      const emoji =
+        item.emotion === "frustrated" ? "😤" :
+        item.emotion === "urgent" ? "⚡" :
+        item.emotion === "excited" ? "🎉" :
+        item.emotion === "sad" ? "💛" : null;
       return (
         <View style={styles.userRow} testID={`message-user-${item.id}`}>
           <View style={styles.userBubble}>
@@ -265,6 +285,11 @@ export default function ChatScreen() {
               </Text>
             )}
           </View>
+          {emoji && (
+            <Text style={styles.emotionTag} testID={`emotion-${item.id}`}>
+              {emoji} {item.emotion}
+            </Text>
+          )}
         </View>
       );
     }
@@ -273,9 +298,21 @@ export default function ChatScreen() {
         <View style={styles.aiBadge}>
           <Ionicons name="sparkles" size={14} color={theme.color.brand} />
         </View>
-        <Text style={styles.aiText} selectable>
-          {item.content}
-        </Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.aiText} selectable>
+            {item.content}
+          </Text>
+          {item.whatsapp_link && (
+            <Pressable
+              style={styles.whatsappBtn}
+              onPress={() => Linking.openURL(item.whatsapp_link!)}
+              testID={`whatsapp-${item.id}`}
+            >
+              <Ionicons name="logo-whatsapp" size={16} color="#fff" />
+              <Text style={styles.whatsappBtnText}>Open in WhatsApp</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
     );
   }, []);
@@ -405,6 +442,18 @@ export default function ChatScreen() {
             <Text style={styles.errorText} numberOfLines={2}>
               {error}
             </Text>
+          </Pressable>
+        )}
+
+        {/* Speaking-now interrupt overlay */}
+        {isSpeaking && (
+          <Pressable
+            onPress={interruptSpeech}
+            style={styles.speakingPill}
+            testID="speaking-interrupt-pill"
+          >
+            <Ionicons name="stop-circle" size={16} color={theme.color.onBrand} />
+            <Text style={styles.speakingText}>Nova is speaking — tap to interrupt</Text>
           </Pressable>
         )}
       </SafeAreaView>
@@ -717,4 +766,42 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
   },
   errorText: { color: "#fff", fontSize: 13, flex: 1 },
+  emotionTag: {
+    color: theme.color.onSurfaceSecondary,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    marginTop: 4,
+    marginRight: 4,
+  },
+  whatsappBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 8,
+    marginTop: theme.spacing.md,
+    backgroundColor: "#25D366",
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.pill,
+  },
+  whatsappBtnText: { color: "#fff", fontWeight: "600", fontSize: 13 },
+  speakingPill: {
+    position: "absolute",
+    bottom: 120,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: theme.color.brand,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.pill,
+    shadowColor: theme.color.brand,
+    shadowOpacity: 0.5,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    zIndex: 10,
+  },
+  speakingText: { color: theme.color.onBrand, fontSize: 13, fontWeight: "600" },
 });

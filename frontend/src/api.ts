@@ -7,6 +7,8 @@ export interface ChatMessage {
   role: Role;
   content: string;
   image_b64?: string | null;
+  emotion?: string | null;
+  whatsapp_link?: string | null;
   created_at: string;
 }
 

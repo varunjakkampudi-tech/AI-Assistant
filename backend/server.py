@@ -42,7 +42,14 @@ EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 BASE_SYSTEM_PROMPT = (
     "You are Nova — a warm, articulate, and helpful personal AI assistant. "
     "Speak naturally and concisely; keep replies friendly and easy to read aloud. "
-    "Use plain prose; avoid heavy markdown unless asked."
+    "Use plain prose; avoid heavy markdown unless asked.\n\n"
+    "EMOTIONAL ATTUNEMENT: Read the user's tone from their wording. Adapt your reply:\n"
+    "  • frustrated → briefly acknowledge their frustration before solving (e.g. 'That's annoying — let's fix it.')\n"
+    "  • urgent → drop pleasantries, lead with the action.\n"
+    "  • excited → match their energy with a touch more warmth.\n"
+    "  • sad → be gentle and unhurried, don't rush past the feeling.\n"
+    "  • neutral → your default warm, concise voice.\n"
+    "Never label the emotion out loud — just adapt naturally."
 )
 
 MEMORY_CATEGORIES = ["person", "project", "goal", "skill", "meeting", "date", "preference", "other"]
@@ -62,6 +69,8 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     image_b64: Optional[str] = None
+    emotion: Optional[str] = None  # neutral | frustrated | urgent | excited | sad
+    whatsapp_link: Optional[str] = None  # set on assistant message when a WhatsApp deep-link is generated
     created_at: str = Field(default_factory=utc_now_iso)
 
 
@@ -225,6 +234,30 @@ async def _build_system_prompt() -> str:
 
 
 # ------------------- Memory extraction -------------------
+EMOTION_INSTRUCTIONS = (
+    "Classify the emotional tone of the user message. Reply with ONLY one word from this set: "
+    "neutral, frustrated, urgent, excited, sad. No explanation, no punctuation."
+)
+
+
+async def _classify_emotion(user_text: str) -> str:
+    if not user_text.strip():
+        return "neutral"
+    try:
+        out = await _bedrock_converse(
+            messages=[{"role": "user", "content": [{"text": user_text[:1500]}]}],
+            system_text=EMOTION_INSTRUCTIONS,
+            max_tokens=10,
+            temperature=0.0,
+        )
+        label = (out or "").strip().lower().strip(".,!?\"'")
+        if label not in {"neutral", "frustrated", "urgent", "excited", "sad"}:
+            return "neutral"
+        return label
+    except Exception:
+        return "neutral"
+
+
 EXTRACTION_INSTRUCTIONS = (
     "You are an extraction engine. Read the latest USER message and assistant reply, and decide if it "
     "contains durable personal facts worth remembering long-term about the user (people in their life, "
@@ -372,10 +405,14 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
     bedrock_msgs.append(_msg_block("user", body.message, body.image_b64, body.image_mime))
 
     system_text = await _build_system_prompt()
+    # Run emotion classification and main reply in parallel
+    import asyncio
+    emotion_task = asyncio.create_task(_classify_emotion(body.message))
     reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6)
+    emotion = await emotion_task
 
-    # Try to execute any clear action the user just requested (calendar, email, reminder)
-    action_note = await _extract_and_execute_action(body.message)
+    # Try to execute any clear action the user just requested (calendar, email, reminder, whatsapp)
+    action_note, whatsapp_link = await _extract_and_execute_action(body.message)
     if action_note:
         reply = (reply or "").rstrip() + action_note
 
@@ -384,8 +421,14 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
         role="user",
         content=body.message,
         image_b64=body.image_b64,
+        emotion=emotion,
     )
-    ai_msg = ChatMessage(session_id=body.session_id, role="assistant", content=reply)
+    ai_msg = ChatMessage(
+        session_id=body.session_id,
+        role="assistant",
+        content=reply,
+        whatsapp_link=whatsapp_link,
+    )
     await db.chat_messages.insert_one(user_msg.dict())
     await db.chat_messages.insert_one(ai_msg.dict())
 
@@ -665,14 +708,15 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
 
 ACTION_INSTRUCTIONS = (
     "You are an intent extractor. Read the USER message and decide if it explicitly asks to do "
-    "ONE of these now: create a Google Calendar event, send an email, or create a reminder/task. "
-    "Output ONLY one JSON object (no prose):\n"
+    "ONE of these now: create a Google Calendar event, send an email, create a reminder/task, "
+    "or send a WhatsApp message. Output ONLY one JSON object (no prose):\n"
     "  - For calendar:  {\"action\":\"create_event\", \"summary\":string, \"start_iso\":ISO8601, \"end_iso\":ISO8601, \"description\":string}\n"
     "  - For email:     {\"action\":\"send_email\", \"to\":string, \"subject\":string, \"body\":string}\n"
     "  - For reminder:  {\"action\":\"create_reminder\", \"text\":string, \"condition\":string}\n"
+    "  - For whatsapp:  {\"action\":\"whatsapp_message\", \"phone\":string-or-empty, \"text\":string}  (phone is E.164 like +91...; leave empty if user did not specify)\n"
     "  - Otherwise:     {\"action\":\"none\"}\n"
     "Resolve relative times against the provided NOW. Default duration of a meeting is 30 minutes. "
-    "Only return create_event/send_email/create_reminder when the user's request is unambiguous."
+    "Only return a non-none action when the user's request is unambiguous."
 )
 
 
@@ -688,11 +732,10 @@ def _safe_json_object(text: str) -> dict:
         return {}
 
 
-async def _extract_and_execute_action(user_text: str) -> Optional[str]:
-    """Detect an actionable intent in the user's message and execute it. Returns a
-    confirmation string to append to the assistant reply, or None."""
+async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Optional[str]]:
+    """Detect an actionable intent and execute it. Returns (confirmation_note, whatsapp_link)."""
     if not user_text.strip():
-        return None
+        return None, None
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         prompt = f"NOW: {now_iso}\nUSER MESSAGE:\n{user_text}\n\nReturn the JSON."
@@ -707,40 +750,46 @@ async def _extract_and_execute_action(user_text: str) -> Optional[str]:
         if action == "create_event":
             token = await gh.get_valid_token(db)
             if not token:
-                return "\n\n📅 I tried to schedule that, but Google isn't connected yet. Open Daily Briefing → Connect Google."
+                return "\n\n📅 I tried to schedule that, but Google isn't connected yet. Open Daily Briefing → Connect Google.", None
             try:
                 ev = await gh.create_event(
-                    token,
-                    obj.get("summary", "Untitled"),
-                    obj["start_iso"],
-                    obj["end_iso"],
-                    obj.get("description", ""),
+                    token, obj.get("summary", "Untitled"),
+                    obj["start_iso"], obj["end_iso"], obj.get("description", ""),
                 )
                 start_h = ev.get("start", {}).get("dateTime", obj.get("start_iso", ""))
-                return f"\n\n📅 Done — scheduled “{ev.get('summary')}” for {start_h}."
+                return f"\n\n📅 Done — scheduled “{ev.get('summary')}” for {start_h}.", None
             except Exception as e:
                 logger.warning("Auto create_event failed: %s", e)
-                return f"\n\n⚠️ Couldn't create that event: {str(e)[:100]}"
+                return f"\n\n⚠️ Couldn't create that event: {str(e)[:100]}", None
         if action == "send_email":
             token = await gh.get_valid_token(db)
             if not token:
-                return "\n\n✉️ I tried to send that, but Google isn't connected yet. Open Daily Briefing → Connect Google."
+                return "\n\n✉️ I tried to send that, but Google isn't connected yet. Open Daily Briefing → Connect Google.", None
             try:
-                await gh.send_email(
-                    token, obj.get("to", ""), obj.get("subject", "(no subject)"), obj.get("body", "")
-                )
-                return f"\n\n✉️ Sent — “{obj.get('subject', '(no subject)')}” to {obj.get('to')}."
+                await gh.send_email(token, obj.get("to", ""), obj.get("subject", "(no subject)"), obj.get("body", ""))
+                return f"\n\n✉️ Sent — “{obj.get('subject', '(no subject)')}” to {obj.get('to')}.", None
             except Exception as e:
                 logger.warning("Auto send_email failed: %s", e)
-                return f"\n\n⚠️ Couldn't send that email: {str(e)[:100]}"
+                return f"\n\n⚠️ Couldn't send that email: {str(e)[:100]}", None
         if action == "create_reminder":
             r = Reminder(text=obj.get("text", "")[:300], condition=obj.get("condition", "")[:300])
             if r.text:
                 await db.reminders.insert_one(r.dict())
-                return f"\n\n🔔 Added reminder: “{r.text}”"
+                return f"\n\n🔔 Added reminder: “{r.text}”", None
+        if action == "whatsapp_message":
+            text = (obj.get("text") or "").strip()
+            phone = re.sub(r"[^\d+]", "", obj.get("phone") or "")
+            if not text:
+                return None, None
+            from urllib.parse import quote
+            if phone:
+                link = f"https://wa.me/{phone.lstrip('+')}?text={quote(text)}"
+            else:
+                link = f"https://wa.me/?text={quote(text)}"
+            return "\n\n💬 I drafted a WhatsApp message for you — tap the button to open it and hit send.", link
     except Exception as e:
         logger.warning("Action extraction failed: %s", e)
-    return None
+    return None, None
 
 
 # ----- Google OAuth + Gmail + Calendar -----
