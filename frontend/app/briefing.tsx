@@ -8,10 +8,12 @@ import {
   RefreshControl,
   ActivityIndicator,
   Platform,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import * as Location from "expo-location";
+import * as WebBrowser from "expo-web-browser";
 
 import { theme } from "@/src/theme";
 import { api, Goal, Memory, Reminder } from "@/src/api";
@@ -32,7 +34,9 @@ interface BriefingData {
   active_goals: Goal[];
   important_dates: Memory[];
   session_count: number;
-  integrations: Record<string, { connected: boolean; note: string }>;
+  upcoming_events?: { id: string; summary: string; start: string; end: string; location?: string; html_link?: string }[];
+  recent_emails?: { id: string; from: string; subject: string; date: string; snippet: string; unread: boolean }[];
+  integrations: Record<string, { connected: boolean; email?: string | null }>;
 }
 
 function weatherIcon(code?: number): keyof typeof Ionicons.glyphMap {
@@ -96,6 +100,37 @@ export default function BriefingScreen() {
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  }, [load]);
+
+  const connectGoogle = useCallback(async () => {
+    try {
+      const base = process.env.EXPO_PUBLIC_BACKEND_URL;
+      const res = await fetch(`${base}/api/google/auth-url`);
+      const data = await res.json();
+      if (!data?.url) {
+        setError("Could not get auth URL");
+        return;
+      }
+      if (Platform.OS === "web") {
+        Linking.openURL(data.url);
+      } else {
+        await WebBrowser.openAuthSessionAsync(data.url, `${base}/api/google/callback`);
+      }
+      // Refresh briefing after they return
+      setTimeout(() => load(), 1000);
+    } catch (e: any) {
+      setError(`Connect failed: ${e?.message || e}`);
+    }
+  }, [load]);
+
+  const disconnectGoogle = useCallback(async () => {
+    try {
+      const base = process.env.EXPO_PUBLIC_BACKEND_URL;
+      await fetch(`${base}/api/google/disconnect`, { method: "POST" });
+      load();
+    } catch (e: any) {
+      setError(`Disconnect failed: ${e?.message || e}`);
+    }
   }, [load]);
 
   const greetingLine = data
@@ -235,30 +270,101 @@ export default function BriefingScreen() {
               )}
             </View>
 
+            {/* Calendar */}
+            {data.integrations.google_calendar?.connected && (
+              <View style={styles.card} testID="briefing-calendar-card">
+                <View style={styles.cardHead}>
+                  <Ionicons name="calendar" size={20} color={theme.color.brand} />
+                  <Text style={styles.cardTitle}>Upcoming events</Text>
+                  <View style={styles.countPill}>
+                    <Text style={styles.countText}>{data.upcoming_events?.length || 0}</Text>
+                  </View>
+                </View>
+                {(data.upcoming_events || []).length === 0 ? (
+                  <Text style={styles.cardEmpty}>Nothing on your calendar.</Text>
+                ) : (
+                  (data.upcoming_events || []).map((ev) => (
+                    <View key={ev.id} style={styles.lineItem}>
+                      <View style={styles.dot} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.lineText}>{ev.summary}</Text>
+                        <Text style={styles.lineSub}>
+                          {new Date(ev.start).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+                          {ev.location ? ` · ${ev.location}` : ""}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            )}
+
+            {/* Email */}
+            {data.integrations.gmail?.connected && (
+              <View style={styles.card} testID="briefing-email-card">
+                <View style={styles.cardHead}>
+                  <Ionicons name="mail" size={20} color={theme.color.brand} />
+                  <Text style={styles.cardTitle}>Recent emails</Text>
+                  <View style={styles.countPill}>
+                    <Text style={styles.countText}>{data.recent_emails?.length || 0}</Text>
+                  </View>
+                </View>
+                {(data.recent_emails || []).length === 0 ? (
+                  <Text style={styles.cardEmpty}>Inbox is clear.</Text>
+                ) : (
+                  (data.recent_emails || []).map((em) => (
+                    <View key={em.id} style={styles.lineItem}>
+                      <View style={[styles.dot, em.unread && { backgroundColor: theme.color.brand }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.lineText} numberOfLines={1}>
+                          {em.subject}
+                        </Text>
+                        <Text style={styles.lineSub} numberOfLines={1}>
+                          {em.from.replace(/<.*>/, "").trim()} · {em.snippet.slice(0, 60)}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            )}
+
             {/* Integration banner */}
             <View style={[styles.card, styles.integrationCard]} testID="briefing-integrations-card">
               <View style={styles.cardHead}>
                 <Ionicons name="link-outline" size={20} color={theme.color.brand} />
-                <Text style={styles.cardTitle}>Connect inbox & calendar</Text>
+                <Text style={styles.cardTitle}>
+                  {data.integrations.google_calendar?.connected ? "Google connected" : "Connect your inbox"}
+                </Text>
               </View>
-              <Text style={styles.cardEmpty}>
-                Gmail and Google Calendar (and Outlook) bring meeting and email summaries into this
-                briefing. Connecting them requires your own Google Cloud OAuth client (or Azure AD
-                app) with the right scopes — share credentials and I'll wire them up.
-              </Text>
-              {Object.entries(data.integrations).map(([name, info]) => (
-                <View key={name} style={styles.intRow}>
-                  <Ionicons
-                    name={info.connected ? "checkmark-circle" : "ellipse-outline"}
-                    size={16}
-                    color={info.connected ? theme.color.success : theme.color.onSurfaceSecondary}
-                  />
-                  <Text style={styles.intName}>{name.replace("_", " ")}</Text>
-                  <Text style={styles.intStatus}>
-                    {info.connected ? "Connected" : "Not connected"}
+              {data.integrations.google_calendar?.connected ? (
+                <>
+                  <Text style={styles.cardEmpty}>
+                    Signed in as {data.integrations.google_calendar.email || "Google user"}.
                   </Text>
-                </View>
-              ))}
+                  <Pressable
+                    onPress={disconnectGoogle}
+                    style={[styles.connectBtn, { backgroundColor: theme.color.surfaceTertiary }]}
+                    testID="disconnect-google-button"
+                  >
+                    <Text style={[styles.connectBtnText, { color: theme.color.onSurface }]}>Disconnect Google</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.cardEmpty}>
+                    Connect Google to see your upcoming events and recent inbox in this briefing.
+                  </Text>
+                  <Pressable
+                    onPress={connectGoogle}
+                    style={styles.connectBtn}
+                    testID="connect-google-button"
+                  >
+                    <Ionicons name="logo-google" size={16} color={theme.color.onBrand} />
+                    <Text style={styles.connectBtnText}>Connect Google</Text>
+                  </Pressable>
+                </>
+              )}
             </View>
 
             <Text style={styles.footer}>{data.session_count} conversations on record</Text>
@@ -319,4 +425,16 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
   },
   errorText: { color: "#fff", flex: 1, fontSize: 13 },
+  connectBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: theme.color.brand,
+    paddingHorizontal: theme.spacing.xl,
+    paddingVertical: theme.spacing.md,
+    borderRadius: theme.radius.pill,
+    marginTop: theme.spacing.sm,
+  },
+  connectBtnText: { color: theme.color.onBrand, fontWeight: "600" },
 });

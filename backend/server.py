@@ -16,6 +16,9 @@ import httpx
 
 from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
 
+import google_helper as gh
+from fastapi.responses import HTMLResponse, RedirectResponse
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -371,6 +374,11 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
     system_text = await _build_system_prompt()
     reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6)
 
+    # Try to execute any clear action the user just requested (calendar, email, reminder)
+    action_note = await _extract_and_execute_action(body.message)
+    if action_note:
+        reply = (reply or "").rstrip() + action_note
+
     user_msg = ChatMessage(
         session_id=body.session_id,
         role="user",
@@ -616,6 +624,27 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
     ).sort("created_at", -1).to_list(10)
     session_count = await db.chat_sessions.count_documents({})
 
+    google_connected = False
+    upcoming_events: List[dict] = []
+    recent_emails: List[dict] = []
+    google_email: Optional[str] = None
+    try:
+        token = await gh.get_valid_token(db)
+        if token:
+            google_connected = True
+            doc = await db.integrations.find_one({"id": "google"}, {"_id": 0})
+            google_email = (doc or {}).get("email")
+            try:
+                upcoming_events = await gh.list_upcoming_events(token, max_results=5)
+            except Exception as e:
+                logger.warning("Calendar list failed: %s", e)
+            try:
+                recent_emails = await gh.list_recent_messages(token, max_results=5)
+            except Exception as e:
+                logger.warning("Gmail list failed: %s", e)
+    except Exception as e:
+        logger.warning("Google token check failed: %s", e)
+
     return {
         "greeting": _greeting_for_now(tz_offset),
         "name": name,
@@ -624,12 +653,201 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
         "active_goals": active_goals,
         "important_dates": date_memories,
         "session_count": session_count,
+        "upcoming_events": upcoming_events,
+        "recent_emails": recent_emails,
         "integrations": {
-            "google_calendar": {"connected": False, "note": "Connect requires Google Cloud OAuth client with calendar.events scope."},
-            "gmail": {"connected": False, "note": "Connect requires Google Cloud OAuth client with gmail.readonly + gmail.send scopes."},
-            "outlook": {"connected": False, "note": "Connect requires Azure AD app credentials."},
+            "google_calendar": {"connected": google_connected, "email": google_email},
+            "gmail": {"connected": google_connected, "email": google_email},
+            "outlook": {"connected": False},
         },
     }
+
+
+ACTION_INSTRUCTIONS = (
+    "You are an intent extractor. Read the USER message and decide if it explicitly asks to do "
+    "ONE of these now: create a Google Calendar event, send an email, or create a reminder/task. "
+    "Output ONLY one JSON object (no prose):\n"
+    "  - For calendar:  {\"action\":\"create_event\", \"summary\":string, \"start_iso\":ISO8601, \"end_iso\":ISO8601, \"description\":string}\n"
+    "  - For email:     {\"action\":\"send_email\", \"to\":string, \"subject\":string, \"body\":string}\n"
+    "  - For reminder:  {\"action\":\"create_reminder\", \"text\":string, \"condition\":string}\n"
+    "  - Otherwise:     {\"action\":\"none\"}\n"
+    "Resolve relative times against the provided NOW. Default duration of a meeting is 30 minutes. "
+    "Only return create_event/send_email/create_reminder when the user's request is unambiguous."
+)
+
+
+def _safe_json_object(text: str) -> dict:
+    if not text:
+        return {}
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return {}
+
+
+async def _extract_and_execute_action(user_text: str) -> Optional[str]:
+    """Detect an actionable intent in the user's message and execute it. Returns a
+    confirmation string to append to the assistant reply, or None."""
+    if not user_text.strip():
+        return None
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        prompt = f"NOW: {now_iso}\nUSER MESSAGE:\n{user_text}\n\nReturn the JSON."
+        raw = await _bedrock_converse(
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            system_text=ACTION_INSTRUCTIONS,
+            max_tokens=300,
+            temperature=0.0,
+        )
+        obj = _safe_json_object(raw)
+        action = (obj.get("action") or "none").lower()
+        if action == "create_event":
+            token = await gh.get_valid_token(db)
+            if not token:
+                return "\n\n📅 I tried to schedule that, but Google isn't connected yet. Open Daily Briefing → Connect Google."
+            try:
+                ev = await gh.create_event(
+                    token,
+                    obj.get("summary", "Untitled"),
+                    obj["start_iso"],
+                    obj["end_iso"],
+                    obj.get("description", ""),
+                )
+                start_h = ev.get("start", {}).get("dateTime", obj.get("start_iso", ""))
+                return f"\n\n📅 Done — scheduled “{ev.get('summary')}” for {start_h}."
+            except Exception as e:
+                logger.warning("Auto create_event failed: %s", e)
+                return f"\n\n⚠️ Couldn't create that event: {str(e)[:100]}"
+        if action == "send_email":
+            token = await gh.get_valid_token(db)
+            if not token:
+                return "\n\n✉️ I tried to send that, but Google isn't connected yet. Open Daily Briefing → Connect Google."
+            try:
+                await gh.send_email(
+                    token, obj.get("to", ""), obj.get("subject", "(no subject)"), obj.get("body", "")
+                )
+                return f"\n\n✉️ Sent — “{obj.get('subject', '(no subject)')}” to {obj.get('to')}."
+            except Exception as e:
+                logger.warning("Auto send_email failed: %s", e)
+                return f"\n\n⚠️ Couldn't send that email: {str(e)[:100]}"
+        if action == "create_reminder":
+            r = Reminder(text=obj.get("text", "")[:300], condition=obj.get("condition", "")[:300])
+            if r.text:
+                await db.reminders.insert_one(r.dict())
+                return f"\n\n🔔 Added reminder: “{r.text}”"
+    except Exception as e:
+        logger.warning("Action extraction failed: %s", e)
+    return None
+
+
+# ----- Google OAuth + Gmail + Calendar -----
+@api_router.get("/google/auth-url")
+async def google_auth_url():
+    if not gh.is_configured():
+        raise HTTPException(500, "Google OAuth not configured on this server")
+    return {"url": gh.auth_url()}
+
+
+@api_router.get("/google/status")
+async def google_status():
+    doc = await db.integrations.find_one({"id": "google"}, {"_id": 0})
+    if not doc:
+        return {"connected": False}
+    return {"connected": True, "email": doc.get("email"), "name": doc.get("name")}
+
+
+@api_router.post("/google/disconnect")
+async def google_disconnect():
+    await db.integrations.delete_one({"id": "google"})
+    return {"ok": True}
+
+
+@api_router.get("/google/callback")
+async def google_callback(code: Optional[str] = None, error: Optional[str] = None):
+    if error:
+        return HTMLResponse(f"<h2>Google sign-in failed</h2><p>{error}</p>", status_code=400)
+    if not code:
+        return HTMLResponse("<h2>Missing code</h2>", status_code=400)
+    try:
+        tok = await gh.exchange_code(code)
+    except HTTPException as e:
+        return HTMLResponse(f"<h2>Token exchange failed</h2><pre>{e.detail}</pre>", status_code=400)
+    access = tok.get("access_token")
+    refresh = tok.get("refresh_token")
+    expires_in = tok.get("expires_in", 3600)
+    info = await gh.get_userinfo(access) if access else {}
+    import time as _t
+    now = int(_t.time())
+    set_doc = {
+        "id": "google",
+        "access_token": access,
+        "expires_at": now + expires_in,
+        "scope": tok.get("scope", ""),
+        "email": info.get("email"),
+        "name": info.get("name"),
+        "picture": info.get("picture"),
+        "updated_at": utc_now_iso(),
+    }
+    if refresh:
+        set_doc["refresh_token"] = refresh
+    await db.integrations.update_one({"id": "google"}, {"$set": set_doc}, upsert=True)
+    return HTMLResponse(
+        """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+        <div style="text-align:center;padding:32px;">
+          <div style="font-size:48px;color:#E1B168;">&#10003;</div>
+          <h2 style="font-weight:400;">Google connected</h2>
+          <p style="color:#B4B4B8;">You can close this tab and return to Nova.</p>
+          <script>setTimeout(function(){window.close()},1500);</script>
+        </div></body></html>"""
+    )
+
+
+@api_router.get("/gmail/recent")
+async def gmail_recent(limit: int = 5):
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected")
+    return {"messages": await gh.list_recent_messages(token, max_results=limit)}
+
+
+class SendEmailReq(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+
+@api_router.post("/gmail/send")
+async def gmail_send(body: SendEmailReq):
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected")
+    return await gh.send_email(token, body.to, body.subject, body.body)
+
+
+@api_router.get("/calendar/upcoming")
+async def calendar_upcoming(limit: int = 10):
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected")
+    return {"events": await gh.list_upcoming_events(token, max_results=limit)}
+
+
+class CreateEventReq(BaseModel):
+    summary: str
+    start_iso: str
+    end_iso: str
+    description: Optional[str] = ""
+
+
+@api_router.post("/calendar/events")
+async def calendar_create(body: CreateEventReq):
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected")
+    return await gh.create_event(token, body.summary, body.start_iso, body.end_iso, body.description or "")
 
 
 app.include_router(api_router)
