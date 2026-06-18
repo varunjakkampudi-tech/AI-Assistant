@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   Platform,
   ActivityIndicator,
   Keyboard,
+  Share,
+  ScrollView,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -25,7 +27,7 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
 } from "expo-audio";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
 import { storage } from "@/src/utils/storage";
@@ -34,6 +36,13 @@ import VoiceOrb from "@/src/components/VoiceOrb";
 import TypingDots from "@/src/components/TypingDots";
 
 const SESSION_KEY = "nova_current_session";
+
+const SUGGESTIONS = [
+  { icon: "bulb-outline", label: "Explain a tricky concept", prompt: "Explain quantum entanglement like I'm 12." },
+  { icon: "create-outline", label: "Help me write", prompt: "Help me draft a short, warm thank-you note to a mentor." },
+  { icon: "code-slash-outline", label: "Debug some code", prompt: "Why does my Python list comprehension throw a NameError when I use a walrus operator inside it?" },
+  { icon: "compass-outline", label: "Plan a trip", prompt: "Plan a 3-day food-focused trip to Lisbon for first-time travelers." },
+] as const;
 
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
@@ -52,35 +61,54 @@ export default function ChatScreen() {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
 
-  // Init: get or create a session
-  useEffect(() => {
-    (async () => {
-      const existing = await storage.getItem<string>(SESSION_KEY, "");
-      if (existing) {
+  // Load (or create) the active session and its history.
+  const hydrateActiveSession = useCallback(async () => {
+    const existing = await storage.getItem<string>(SESSION_KEY, "");
+    if (existing) {
+      try {
+        const msgs = await api.getMessages(existing);
         setSessionId(existing);
-        try {
-          const msgs = await api.getMessages(existing);
-          setMessages(msgs);
-        } catch {
-          // session may have been deleted; create fresh
-          await startNewChat();
-        }
-      } else {
-        await startNewChat();
+        setMessages(msgs);
+        setError(null);
+        return;
+      } catch {
+        // session no longer exists — fall through to fresh chat
       }
-    })();
-    // configure audio mode for recording on iOS
-    setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {});
-  }, []);
-
-  const startNewChat = useCallback(async () => {
+    }
     try {
       const s = await api.createSession();
       await storage.setItem(SESSION_KEY, s.id);
       setSessionId(s.id);
       setMessages([]);
-      setError(null);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    }
+  }, []);
+
+  // Configure audio session for recording once on mount.
+  useEffect(() => {
+    setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {});
+  }, []);
+
+  // Re-hydrate whenever the screen comes back into focus (e.g. after picking a
+  // conversation from /history or starting a new chat from there).
+  useFocusEffect(
+    useCallback(() => {
+      hydrateActiveSession();
+      return () => {
+        Speech.stop();
+      };
+    }, [hydrateActiveSession]),
+  );
+
+  const startNewChat = useCallback(async () => {
+    try {
       Speech.stop();
+      const s = await api.createSession();
+      await storage.setItem(SESSION_KEY, s.id);
+      setSessionId(s.id);
+      setMessages([]);
+      setError(null);
     } catch (e: any) {
       setError(String(e?.message || e));
     }
@@ -175,6 +203,21 @@ export default function ChatScreen() {
   const isRecording = recorderState.isRecording;
   const isBusy = sending || transcribing;
 
+  const shareConversation = useCallback(async () => {
+    if (messages.length === 0) return;
+    const text = messages
+      .map((m) => `${m.role === "user" ? "You" : "Nova"}: ${m.content}`)
+      .join("\n\n");
+    try {
+      await Share.share({
+        message: `My conversation with Nova\n\n${text}\n\n— Sent from Nova AI`,
+        title: "Nova conversation",
+      });
+    } catch (e: any) {
+      setError(`Share failed: ${e?.message || e}`);
+    }
+  }, [messages]);
+
   const renderItem = useCallback(({ item }: { item: ChatMessage }) => {
     if (item.role === "user") {
       return (
@@ -243,6 +286,16 @@ export default function ChatScreen() {
               color={ttsEnabled ? theme.color.brand : theme.color.onSurfaceSecondary}
             />
           </Pressable>
+          {messages.length > 0 && (
+            <Pressable
+              style={styles.headerBtn}
+              onPress={shareConversation}
+              hitSlop={10}
+              testID="share-button"
+            >
+              <Ionicons name="share-outline" size={20} color={theme.color.onSurface} />
+            </Pressable>
+          )}
           <Pressable
             style={styles.headerBtn}
             onPress={startNewChat}
@@ -270,6 +323,24 @@ export default function ChatScreen() {
             <Text style={styles.emptySubtitle}>
               Ask anything — type or hold the mic to speak.
             </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.suggestionsRow}
+              style={styles.suggestionsScroll}
+            >
+              {SUGGESTIONS.map((s) => (
+                <Pressable
+                  key={s.label}
+                  style={styles.suggestionChip}
+                  onPress={() => send(s.prompt)}
+                  testID={`suggestion-${s.label.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  <Ionicons name={s.icon as any} size={14} color={theme.color.brand} />
+                  <Text style={styles.suggestionLabel}>{s.label}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
           </View>
         ) : (
           <FlatList
@@ -462,6 +533,25 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 20,
   },
+  suggestionsScroll: { width: "100%", marginTop: theme.spacing.lg, flexGrow: 0 },
+  suggestionsRow: {
+    paddingHorizontal: theme.spacing.lg,
+    gap: theme.spacing.sm,
+    alignItems: "center",
+  },
+  suggestionChip: {
+    height: 36,
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.lg,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.color.surfaceTertiary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.brandSecondary,
+  },
+  suggestionLabel: { color: theme.color.onSurfaceTertiary, fontSize: 13 },
   recordingOverlay: {
     position: "absolute",
     top: 100,
