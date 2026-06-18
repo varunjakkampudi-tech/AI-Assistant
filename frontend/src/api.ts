@@ -156,22 +156,21 @@ export const api = {
     }
     if (tzOffset != null) qs.set("tz_offset", String(tzOffset));
     const s = qs.toString();
-    return jfetch<{
-      greeting: string;
-      name: string | null;
-      weather: {
-        temperature_c: number;
-        humidity: number;
-        wind_kph: number;
-        code: number;
-        summary: string;
-        timezone: string;
-      } | null;
-      pending_reminders: Reminder[];
-      active_goals: Goal[];
-      important_dates: Memory[];
-      session_count: number;
-      integrations: Record<string, { connected: boolean; note: string }>;
-    }>(`/briefing${s ? `?${s}` : ""}`);
+    return jfetch<any>(`/briefing${s ? `?${s}` : ""}`);
   },
+
+  // Auth gate
+  me: async (): Promise<{ email: string; name: string; picture?: string } | null> => {
+    const res = await fetch(`${BASE}/api/me`);
+    if (res.status === 401) return null;
+    if (!res.ok) throw new Error(`me ${res.status}`);
+    return res.json();
+  },
+  googleAuthUrl: () => jfetch<{ url: string }>("/google/auth-url"),
+
+  // Notifications
+  listNotifications: (kind?: string) =>
+    jfetch<any[]>(`/notifications${kind ? `?kind=${kind}` : ""}`),
+  deleteNotification: (id: string) =>
+    jfetch<{ ok: boolean }>(`/notifications/${id}`, { method: "DELETE" }),
 };

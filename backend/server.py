@@ -808,6 +808,109 @@ async def google_status():
     return {"connected": True, "email": doc.get("email"), "name": doc.get("name")}
 
 
+@api_router.get("/me")
+async def me():
+    """Single-user auth gate. Returns Google user profile if connected, else 401."""
+    doc = await db.integrations.find_one({"id": "google"}, {"_id": 0})
+    if not doc or not doc.get("email"):
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return {
+        "email": doc.get("email"),
+        "name": doc.get("name"),
+        "picture": doc.get("picture"),
+    }
+
+
+# ----- Device notifications ingest + transaction extraction -----
+class NotificationIngest(BaseModel):
+    package_name: Optional[str] = None
+    title: Optional[str] = ""
+    text: Optional[str] = ""
+    sub_text: Optional[str] = ""
+    posted_at: Optional[str] = None
+
+
+class DeviceNotification(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    package_name: Optional[str] = None
+    title: str = ""
+    text: str = ""
+    sub_text: str = ""
+    posted_at: str = Field(default_factory=utc_now_iso)
+    received_at: str = Field(default_factory=utc_now_iso)
+    kind: Optional[str] = None  # transaction | message | other
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    direction: Optional[str] = None  # debit | credit
+    merchant: Optional[str] = None
+    raw_text: str = ""
+
+
+TX_EXTRACTION_INSTRUCTIONS = (
+    "You analyse a single Android notification from a banking, UPI, payments or messaging app. "
+    "Decide if it represents a financial transaction or an important personal message. "
+    "Return ONLY one JSON object:\n"
+    "  - Transaction:  {\"kind\":\"transaction\", \"amount\":number, \"currency\":\"INR\"|\"USD\"|..., \"direction\":\"debit\"|\"credit\", \"merchant\":string}\n"
+    "  - Message:      {\"kind\":\"message\"}\n"
+    "  - Otherwise:    {\"kind\":\"other\"}"
+)
+
+
+async def _classify_notification(title: str, text: str) -> dict:
+    body = f"TITLE: {title}\nTEXT: {text}"[:1500]
+    try:
+        raw = await _bedrock_converse(
+            messages=[{"role": "user", "content": [{"text": body}]}],
+            system_text=TX_EXTRACTION_INSTRUCTIONS,
+            max_tokens=200,
+            temperature=0.0,
+        )
+        return _safe_json_object(raw) or {"kind": "other"}
+    except Exception:
+        return {"kind": "other"}
+
+
+@api_router.post("/notifications/ingest", response_model=DeviceNotification)
+async def ingest_notification(body: NotificationIngest, background: BackgroundTasks):
+    raw = f"{body.title or ''} | {body.text or ''}".strip()
+    note = DeviceNotification(
+        package_name=body.package_name,
+        title=body.title or "",
+        text=body.text or "",
+        sub_text=body.sub_text or "",
+        posted_at=body.posted_at or utc_now_iso(),
+        raw_text=raw,
+    )
+    # Classify synchronously (small + fast) so the row stored has the right kind
+    cls = await _classify_notification(note.title, note.text)
+    note.kind = (cls.get("kind") or "other").lower()
+    if note.kind == "transaction":
+        try:
+            note.amount = float(cls.get("amount")) if cls.get("amount") is not None else None
+        except Exception:
+            note.amount = None
+        note.currency = cls.get("currency") or None
+        note.direction = (cls.get("direction") or "").lower() or None
+        note.merchant = cls.get("merchant") or None
+    await db.notifications.insert_one(note.dict())
+    return note
+
+
+@api_router.get("/notifications", response_model=List[DeviceNotification])
+async def list_notifications(kind: Optional[str] = None, limit: int = 100):
+    q: dict = {}
+    if kind:
+        q["kind"] = kind
+    rows = await db.notifications.find(q, {"_id": 0}).sort("posted_at", -1).to_list(limit)
+    return [DeviceNotification(**r) for r in rows]
+
+
+@api_router.delete("/notifications/{nid}")
+async def delete_notification(nid: str):
+    await db.notifications.delete_one({"id": nid})
+    return {"ok": True}
+
+
 @api_router.post("/google/disconnect")
 async def google_disconnect():
     await db.integrations.delete_one({"id": "google"})
