@@ -10,18 +10,33 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.nova.ai",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Talk to Nova using your voice",
-        "NSLocationWhenInUseUsageDescription": "Show weather for your area in the daily briefing"
+        "NSLocationWhenInUseUsageDescription": "Show weather for your area in daily briefing",
+        "NSContactsUsageDescription": "Look up contact names for incoming calls",
+        "UIBackgroundModes": ["audio", "voip", "fetch", "remote-notification"]
       }
     },
     "android": {
+      "package": "com.nova.ai",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["RECORD_AUDIO", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "RECORD_AUDIO",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "READ_CONTACTS",
+        "READ_PHONE_STATE",
+        "CALL_PHONE",
+        "READ_CALL_LOG",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED",
+        "FOREGROUND_SERVICE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -50,6 +65,20 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Show your daily briefing with weather for your area"
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Look up contact names for incoming calls"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#9333ea",
+          "sounds": ["./assets/sounds/notification.wav"]
         }
       ]
     ],
