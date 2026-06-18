@@ -36,7 +36,8 @@ interface BriefingData {
   session_count: number;
   upcoming_events?: { id: string; summary: string; start: string; end: string; location?: string; html_link?: string }[];
   recent_emails?: { id: string; from: string; subject: string; date: string; snippet: string; unread: boolean }[];
-  integrations: Record<string, { connected: boolean; email?: string | null }>;
+  missed_calls?: { id: string; phone_number: string; contact_name?: string; missed_at: string }[];
+  integrations: Record<string, { connected: boolean; email?: string | null; enabled?: boolean }>;
 }
 
 function weatherIcon(code?: number): keyof typeof Ionicons.glyphMap {
@@ -220,6 +221,38 @@ export default function BriefingScreen() {
                 ))
               )}
             </View>
+
+            {/* Missed Calls */}
+            {data.missed_calls && data.missed_calls.length > 0 && (
+              <View style={styles.card} testID="briefing-missed-calls-card">
+                <View style={styles.cardHead}>
+                  <Ionicons name="call-outline" size={20} color="#ef4444" />
+                  <Text style={[styles.cardTitle, { color: "#ef4444" }]}>Missed calls</Text>
+                  <View style={[styles.countPill, { backgroundColor: "rgba(239,68,68,0.15)" }]}>
+                    <Text style={[styles.countText, { color: "#ef4444" }]}>{data.missed_calls.length}</Text>
+                  </View>
+                </View>
+                {data.missed_calls.slice(0, 5).map((call) => (
+                  <View key={call.id} style={styles.lineItem}>
+                    <View style={[styles.dot, { backgroundColor: "#ef4444" }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.lineText}>
+                        {call.contact_name || call.phone_number}
+                      </Text>
+                      <Text style={styles.lineSub}>
+                        {new Date(call.missed_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={styles.callBackBtn}
+                      onPress={() => Linking.openURL(`tel:${call.phone_number}`)}
+                    >
+                      <Ionicons name="call" size={16} color={theme.color.brand} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {/* Goals */}
             <View style={styles.card} testID="briefing-goals-card">
@@ -437,4 +470,12 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
   },
   connectBtnText: { color: theme.color.onBrand, fontWeight: "600" },
+  callBackBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: theme.color.brandTertiary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

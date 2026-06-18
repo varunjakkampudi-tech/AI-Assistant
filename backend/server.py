@@ -702,6 +702,11 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
     except Exception as e:
         logger.warning("Google token check failed: %s", e)
 
+    # Get missed call reminders
+    missed_calls = await db.missed_call_reminders.find(
+        {"status": "pending"}, {"_id": 0}
+    ).sort("missed_at", -1).to_list(10)
+
     return {
         "greeting": _greeting_for_now(tz_offset),
         "name": name,
@@ -712,10 +717,12 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
         "session_count": session_count,
         "upcoming_events": upcoming_events,
         "recent_emails": recent_emails,
+        "missed_calls": missed_calls,
         "integrations": {
             "google_calendar": {"connected": google_connected, "email": google_email},
             "gmail": {"connected": google_connected, "email": google_email},
             "outlook": {"connected": False},
+            "voice": {"enabled": elevenlabs.enabled if elevenlabs else False},
         },
     }
 
