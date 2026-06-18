@@ -173,4 +173,80 @@ export const api = {
     jfetch<any[]>(`/notifications${kind ? `?kind=${kind}` : ""}`),
   deleteNotification: (id: string) =>
     jfetch<{ ok: boolean }>(`/notifications/${id}`, { method: "DELETE" }),
+
+  // ==================== NEW FEATURES ====================
+
+  // Chat with Tools
+  chatWithTools: (
+    session_id: string,
+    message: string,
+    image_b64?: string | null,
+    image_mime?: string | null,
+    use_tools: boolean = true,
+  ) =>
+    jfetch<{
+      session_id: string;
+      user_message: ChatMessage;
+      assistant_message: ChatMessage;
+      tool_calls: Array<{ tool_name: string; params: any; result: any }>;
+    }>("/chat/tools", {
+      method: "POST",
+      body: JSON.stringify({ session_id, message, image_b64, image_mime, use_tools }),
+    }),
+
+  // Web Search
+  webSearch: (query: string) =>
+    jfetch<{ success: boolean; query: string; results: any[] }>("/search/web", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
+
+  // Knowledge Vault
+  uploadDocument: async (uri: string, filename: string, mimeType: string): Promise<any> => {
+    const form = new FormData();
+    // @ts-ignore RN FormData
+    form.append("file", { uri, name: filename, type: mimeType });
+    const res = await fetch(`${BASE}/api/knowledge/upload`, { method: "POST", body: form as any });
+    if (!res.ok) throw new Error(`Upload ${res.status}: ${await res.text()}`);
+    return res.json();
+  },
+  listDocuments: (skip = 0, limit = 20) =>
+    jfetch<{ documents: any[]; total: number }>(`/knowledge/documents?skip=${skip}&limit=${limit}`),
+  getDocument: (id: string) => jfetch<any>(`/knowledge/documents/${id}`),
+  deleteDocument: (id: string) =>
+    jfetch<{ ok: boolean }>(`/knowledge/documents/${id}`, { method: "DELETE" }),
+  searchKnowledge: (query: string) =>
+    jfetch<{ query: string; results: any[] }>("/knowledge/search", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
+  knowledgeStats: () => jfetch<any>("/knowledge/stats"),
+
+  // Phone Calls
+  createCall: (phone_number: string, purpose: string, scheduled_at?: string) =>
+    jfetch<{ success: boolean; call: any; message: string }>("/calls", {
+      method: "POST",
+      body: JSON.stringify({ phone_number, purpose, scheduled_at }),
+    }),
+  listCalls: (status?: string, limit = 50) =>
+    jfetch<{ calls: any[]; total: number }>(`/calls?limit=${limit}${status ? `&status=${status}` : ""}`),
+  getCall: (id: string) => jfetch<any>(`/calls/${id}`),
+  cancelCall: (id: string) =>
+    jfetch<{ ok: boolean }>(`/calls/${id}/cancel`, { method: "POST" }),
+  callStats: () => jfetch<any>("/calls/stats/summary"),
+
+  // Dashboard
+  dashboard: (days = 30) => jfetch<any>(`/dashboard?days=${days}`),
+  usageStats: (days = 30) => jfetch<any>(`/dashboard/usage?days=${days}`),
+  spendingInsights: (days = 30) => jfetch<any>(`/dashboard/spending?days=${days}`),
+  productivityAnalytics: (days = 7) => jfetch<any>(`/dashboard/productivity?days=${days}`),
+  aiInsights: () => jfetch<any>("/dashboard/insights"),
+
+  // Notification Stats
+  notificationStats: () => jfetch<any>("/notifications/stats"),
+  createMockNotification: (app_name: string, title: string, text: string) =>
+    jfetch<any>("/notifications/mock", {
+      method: "POST",
+      body: JSON.stringify({ app_name, title, text }),
+    }),
 };

@@ -213,6 +213,66 @@ backend:
         agent: "testing"
         comment: "Notifications system fully functional. Ingest endpoint working with AI-powered transaction detection (correctly identified ₹500 credit transaction). List notifications and filter by kind working. Delete notification working. All endpoints return 200 OK."
 
+  - task: "Tool-enabled Chat"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Tool-enabled chat endpoint (POST /api/chat/tools) fully functional. Calculator tool successfully invoked for math question 'What is 25% of 150?'. Tool calling framework working correctly with proper tool result integration. Response: 27 chars with 1 tool call. Status: 200 OK."
+
+  - task: "Web Search Integration"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Web search endpoint (POST /api/search/web) working correctly. Query 'Eiffel Tower height' returned 5 results successfully. Response includes success flag, query, and results array. Status: 200 OK."
+
+  - task: "Knowledge Vault"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Knowledge Vault endpoints working correctly. GET /api/knowledge/stats returns proper statistics (total_documents, total_size_bytes, total_size_mb, by_type). GET /api/knowledge/documents returns empty list with total count (0 documents currently). All endpoints return 200 OK."
+
+  - task: "Phone Calls (Mock)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Phone Calls mock endpoints fully functional. POST /api/calls successfully creates mock call with phone_number and purpose. GET /api/calls lists calls with total count (1 call created). GET /api/calls/stats/summary returns statistics (total_calls, by_status, total_duration_seconds, total_duration_minutes). All endpoints return 200 OK."
+
+  - task: "Dashboard Analytics"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Dashboard endpoints fully functional. GET /api/dashboard returns complete dashboard data (generated_at, usage, spending, productivity, insights). GET /api/dashboard/usage returns usage statistics (period_days, totals, recent, daily_messages, goals, reminders, memories_by_category). GET /api/dashboard/spending returns spending insights (period_days, has_data, message). All endpoints return 200 OK."
+
 frontend:
   - task: "Frontend Testing"
     implemented: true
@@ -228,14 +288,14 @@ frontend:
 
 metadata:
   created_by: "testing_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "1.1"
+  test_sequence: 2
   run_ui: false
-  last_tested: "2024-01-XX"
+  last_tested: "2026-06-18"
 
 test_plan:
   current_focus:
-    - "All backend endpoints tested and verified"
+    - "All backend endpoints tested and verified including new features"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -243,3 +303,5 @@ test_plan:
 agent_communication:
   - agent: "testing"
     message: "Comprehensive backend testing completed. All 35 tests passed successfully. AWS Bedrock integration with Amazon Nova Lite model is working correctly. Google Calendar and Gmail integrations are functional. All CRUD operations for sessions, memories, goals, reminders, and notifications are working as expected. Daily briefing with weather integration is operational. No critical issues found."
+  - agent: "testing"
+    message: "NEW FEATURES TESTING COMPLETED (2026-06-18): All 5 new feature sets tested and verified working correctly. (1) Tool-enabled Chat: Calculator tool successfully invoked for math operations. (2) Web Search: DuckDuckGo integration returning 5 results per query. (3) Knowledge Vault: Stats and document listing endpoints operational (0 documents currently). (4) Phone Calls Mock: Create, list, and stats endpoints working. (5) Dashboard Analytics: Full dashboard, usage stats, and spending insights all functional. Total: 50 backend tests passed. No critical issues found."

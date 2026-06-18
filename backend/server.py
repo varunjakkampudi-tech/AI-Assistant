@@ -17,6 +17,10 @@ import httpx
 from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
 
 import google_helper as gh
+import tools as tool_framework
+import knowledge_vault as kv
+import phone_calls as pc
+import dashboard as dash
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -1000,6 +1004,348 @@ async def calendar_create(body: CreateEventReq):
     if not token:
         raise HTTPException(401, "Google not connected")
     return await gh.create_event(token, body.summary, body.start_iso, body.end_iso, body.description or "")
+
+
+# ==================== TOOL CALLING ENHANCED CHAT ====================
+
+class ChatWithToolsRequest(BaseModel):
+    session_id: str
+    message: str
+    image_b64: Optional[str] = None
+    image_mime: Optional[str] = None
+    use_tools: bool = True  # Enable/disable tool calling
+
+
+class ToolCallResult(BaseModel):
+    tool_name: str
+    params: dict
+    result: dict
+
+
+class ChatWithToolsResponse(BaseModel):
+    session_id: str
+    user_message: ChatMessage
+    assistant_message: ChatMessage
+    tool_calls: List[ToolCallResult] = []
+
+
+async def _build_system_prompt_with_tools() -> str:
+    """Build system prompt including tool definitions."""
+    base = await _build_system_prompt()
+    tools_prompt = tool_framework.get_tools_prompt()
+    return f"{base}\n\n{tools_prompt}"
+
+
+@api_router.post("/chat/tools", response_model=ChatWithToolsResponse)
+async def chat_with_tools(body: ChatWithToolsRequest, background: BackgroundTasks):
+    """Chat endpoint with tool calling support."""
+    if not body.message.strip() and not body.image_b64:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    sess = await db.chat_sessions.find_one({"id": body.session_id}, {"_id": 0})
+    if not sess:
+        new_sess = ChatSession(id=body.session_id, title=(body.message or "New Chat")[:40])
+        await db.chat_sessions.insert_one(new_sess.dict())
+
+    history_rows = await db.chat_messages.find(
+        {"session_id": body.session_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(2000)
+
+    bedrock_msgs: List[dict] = []
+    for h in history_rows:
+        bedrock_msgs.append(_msg_block(h["role"], h.get("content", ""), h.get("image_b64"), "image/jpeg"))
+    bedrock_msgs.append(_msg_block("user", body.message, body.image_b64, body.image_mime))
+
+    # Use tool-enhanced system prompt if tools enabled
+    if body.use_tools:
+        system_text = await _build_system_prompt_with_tools()
+    else:
+        system_text = await _build_system_prompt()
+
+    import asyncio
+    emotion_task = asyncio.create_task(_classify_emotion(body.message))
+    
+    # Get initial AI response
+    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=1200, temperature=0.6)
+    emotion = await emotion_task
+
+    tool_calls = []
+    
+    # Check for tool calls in response
+    if body.use_tools:
+        tool_call = tool_framework.extract_tool_call(reply)
+        max_tool_iterations = 3  # Prevent infinite loops
+        
+        while tool_call and len(tool_calls) < max_tool_iterations:
+            tool_name = tool_call.get("tool", "")
+            params = tool_call.get("params", {})
+            
+            logger.info(f"Executing tool: {tool_name} with params: {params}")
+            
+            # Execute the tool
+            result = await tool_framework.execute_tool(tool_name, params, db, gh)
+            
+            tool_calls.append(ToolCallResult(
+                tool_name=tool_name,
+                params=params,
+                result=result
+            ))
+            
+            # Add tool result to conversation and get final response
+            tool_result_text = f"Tool '{tool_name}' returned: {json.dumps(result, default=str)}"
+            bedrock_msgs.append(_msg_block("assistant", reply))
+            bedrock_msgs.append(_msg_block("user", f"[Tool Result]: {tool_result_text}\n\nNow provide a natural response to the user based on this result."))
+            
+            # Get AI's response to the tool result
+            reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6)
+            
+            # Check if AI wants to call another tool
+            tool_call = tool_framework.extract_tool_call(reply)
+
+    # Clean tool call syntax from final reply
+    reply = re.sub(r'```tool\s*\n?\{.*?\}\s*\n?```', '', reply, flags=re.DOTALL).strip()
+
+    # Legacy action extraction (for backwards compatibility)
+    action_note, whatsapp_link = await _extract_and_execute_action(body.message)
+    if action_note:
+        reply = (reply or "").rstrip() + action_note
+
+    user_msg = ChatMessage(
+        session_id=body.session_id,
+        role="user",
+        content=body.message,
+        image_b64=body.image_b64,
+        emotion=emotion,
+    )
+    ai_msg = ChatMessage(
+        session_id=body.session_id,
+        role="assistant",
+        content=reply,
+        whatsapp_link=whatsapp_link,
+    )
+    await db.chat_messages.insert_one(user_msg.dict())
+    await db.chat_messages.insert_one(ai_msg.dict())
+
+    update = {"updated_at": utc_now_iso()}
+    if not history_rows:
+        update["title"] = (body.message.strip()[:40] or "New Chat")
+    await db.chat_sessions.update_one({"id": body.session_id}, {"$set": update})
+
+    background.add_task(_extract_and_store_memories, body.session_id, body.message, reply)
+
+    return ChatWithToolsResponse(
+        session_id=body.session_id,
+        user_message=user_msg,
+        assistant_message=ai_msg,
+        tool_calls=tool_calls
+    )
+
+
+# ==================== WEB SEARCH ====================
+
+class WebSearchRequest(BaseModel):
+    query: str
+
+
+@api_router.post("/search/web")
+async def web_search(body: WebSearchRequest):
+    """Search the web using DuckDuckGo (free, no API key)."""
+    result = await tool_framework.tool_web_search(body.query)
+    return result
+
+
+# ==================== KNOWLEDGE VAULT ====================
+
+@api_router.post("/knowledge/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Upload a document to the knowledge vault."""
+    content = await file.read()
+    result = await kv.process_document(
+        content,
+        file.filename or "document",
+        file.content_type or "application/octet-stream",
+        db
+    )
+    return result
+
+
+@api_router.get("/knowledge/documents")
+async def list_knowledge_documents(skip: int = 0, limit: int = 20):
+    """List all documents in the knowledge vault."""
+    docs = await kv.list_documents(db, skip, limit)
+    total = await db.knowledge_docs.count_documents({})
+    return {"documents": docs, "total": total}
+
+
+@api_router.get("/knowledge/documents/{doc_id}")
+async def get_knowledge_document(doc_id: str):
+    """Get a specific document."""
+    doc = await kv.get_document(doc_id, db)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    return doc
+
+
+@api_router.delete("/knowledge/documents/{doc_id}")
+async def delete_knowledge_document(doc_id: str):
+    """Delete a document from the knowledge vault."""
+    deleted = await kv.delete_document(doc_id, db)
+    if not deleted:
+        raise HTTPException(404, "Document not found")
+    return {"ok": True}
+
+
+@api_router.post("/knowledge/search")
+async def search_knowledge(body: WebSearchRequest):
+    """Search the knowledge vault."""
+    results = await kv.search_documents(body.query, db)
+    return {"query": body.query, "results": results}
+
+
+@api_router.get("/knowledge/stats")
+async def get_knowledge_stats():
+    """Get knowledge vault statistics."""
+    return await kv.get_vault_stats(db)
+
+
+# ==================== PHONE CALLS ====================
+
+@api_router.post("/calls")
+async def create_phone_call(body: pc.CallRequest):
+    """Create a new AI phone call (mock mode)."""
+    return await pc.create_call(body, db)
+
+
+@api_router.get("/calls")
+async def list_phone_calls(status: Optional[str] = None, limit: int = 50, skip: int = 0):
+    """List phone calls."""
+    calls = await pc.list_calls(db, status, limit, skip)
+    total = await db.phone_calls.count_documents({})
+    return {"calls": calls, "total": total}
+
+
+@api_router.get("/calls/{call_id}")
+async def get_phone_call(call_id: str):
+    """Get a specific phone call."""
+    call = await pc.get_call(call_id, db)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    return call
+
+
+@api_router.put("/calls/{call_id}")
+async def update_phone_call(call_id: str, body: pc.CallUpdate):
+    """Update a phone call."""
+    call = await pc.update_call(call_id, body, db)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    return call
+
+
+@api_router.post("/calls/{call_id}/cancel")
+async def cancel_phone_call(call_id: str):
+    """Cancel a pending phone call."""
+    cancelled = await pc.cancel_call(call_id, db)
+    if not cancelled:
+        raise HTTPException(400, "Call cannot be cancelled")
+    return {"ok": True}
+
+
+@api_router.get("/calls/stats/summary")
+async def get_call_stats():
+    """Get phone call statistics."""
+    return await pc.get_call_stats(db)
+
+
+# ==================== DASHBOARD ====================
+
+@api_router.get("/dashboard")
+async def get_dashboard(days: int = 30):
+    """Get complete dashboard data."""
+    return await dash.get_full_dashboard(db, days)
+
+
+@api_router.get("/dashboard/usage")
+async def get_usage_stats(days: int = 30):
+    """Get usage statistics."""
+    return await dash.get_usage_stats(db, days)
+
+
+@api_router.get("/dashboard/spending")
+async def get_spending_insights(days: int = 30):
+    """Get spending insights from banking notifications."""
+    return await dash.get_spending_insights(db, days)
+
+
+@api_router.get("/dashboard/productivity")
+async def get_productivity_analytics(days: int = 7):
+    """Get productivity analytics."""
+    return await dash.get_productivity_analytics(db, days)
+
+
+@api_router.get("/dashboard/insights")
+async def get_ai_insights():
+    """Get AI-generated insights."""
+    return await dash.get_ai_insights(db)
+
+
+# ==================== NATIVE NOTIFICATIONS (Enhanced) ====================
+
+class MockNotificationRequest(BaseModel):
+    """For testing notification ingestion from web."""
+    app_name: str
+    title: str
+    text: str
+
+
+@api_router.post("/notifications/mock")
+async def create_mock_notification(body: MockNotificationRequest):
+    """Create a mock notification for testing."""
+    from datetime import datetime, timezone
+    note = {
+        "id": str(uuid.uuid4()),
+        "package_name": f"com.{body.app_name.lower().replace(' ', '')}",
+        "title": body.title,
+        "text": body.text,
+        "sub_text": "",
+        "posted_at": datetime.now(timezone.utc).isoformat(),
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "kind": "other",
+        "raw_text": f"{body.title} | {body.text}"
+    }
+    
+    # Classify the notification
+    cls = await _classify_notification(note["title"], note["text"])
+    note["kind"] = (cls.get("kind") or "other").lower()
+    if note["kind"] == "transaction":
+        try:
+            note["amount"] = float(cls.get("amount")) if cls.get("amount") is not None else None
+        except:
+            note["amount"] = None
+        note["currency"] = cls.get("currency") or None
+        note["direction"] = (cls.get("direction") or "").lower() or None
+        note["merchant"] = cls.get("merchant") or None
+    
+    await db.notifications.insert_one(note)
+    return note
+
+
+@api_router.get("/notifications/stats")
+async def get_notification_stats():
+    """Get notification statistics."""
+    total = await db.notifications.count_documents({})
+    
+    pipeline = [
+        {"$group": {"_id": "$kind", "count": {"$sum": 1}}}
+    ]
+    by_kind = {}
+    async for doc in db.notifications.aggregate(pipeline):
+        by_kind[doc["_id"] or "other"] = doc["count"]
+    
+    return {
+        "total": total,
+        "by_kind": by_kind
+    }
 
 
 app.include_router(api_router)

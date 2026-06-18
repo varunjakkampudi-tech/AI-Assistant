@@ -19,6 +19,9 @@ const ITEMS: Item[] = [
   { icon: "sparkles-outline", label: "Memories", route: "/memories", testID: "menu-memories" },
   { icon: "trophy-outline", label: "Goals", route: "/goals", testID: "menu-goals" },
   { icon: "alarm-outline", label: "Reminders", route: "/reminders", testID: "menu-reminders" },
+  { icon: "analytics-outline", label: "Dashboard", route: "/dashboard", testID: "menu-dashboard" },
+  { icon: "library-outline", label: "Knowledge Vault", route: "/knowledge", testID: "menu-knowledge" },
+  { icon: "call-outline", label: "AI Calls", route: "/calls", testID: "menu-calls" },
 ];
 
 interface Props {

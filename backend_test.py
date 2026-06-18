@@ -10,8 +10,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-# Production API URL
-BASE_URL = "https://ai-chat-mobile-64.preview.emergentagent.com/api"
+# API URL - using localhost for testing in container
+BASE_URL = "http://localhost:8001/api"
 
 class Colors:
     GREEN = '\033[92m'
@@ -640,6 +640,227 @@ def test_notifications():
         except Exception as e:
             print_test("Delete notification", False, f"Error: {str(e)}")
 
+def test_chat_with_tools():
+    """Test 10: Tool-enabled Chat - POST /api/chat/tools"""
+    print_section("10. TOOL-ENABLED CHAT")
+    
+    # First create a session for tool chat
+    tool_session_id = str(uuid.uuid4())
+    
+    try:
+        payload = {
+            "session_id": tool_session_id,
+            "message": "What is 25% of 150?",
+            "use_tools": True
+        }
+        response = requests.post(f"{BASE_URL}/chat/tools", json=payload, timeout=30)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_session = "session_id" in data
+            has_user_msg = "user_message" in data
+            has_assistant_msg = "assistant_message" in data
+            has_tool_calls = "tool_calls" in data
+            
+            passed = has_session and has_user_msg and has_assistant_msg
+            
+            # Check if calculator tool was called
+            tool_calls = data.get("tool_calls", [])
+            calculator_called = any(tc.get("tool_name") == "calculator" for tc in tool_calls)
+            
+            details = f"Response length: {len(data.get('assistant_message', {}).get('content', ''))} chars"
+            if tool_calls:
+                details += f", Tool calls: {len(tool_calls)}"
+                if calculator_called:
+                    details += " (calculator used)"
+            
+            print_test("Tool-enabled chat endpoint", passed, details)
+            
+            if calculator_called:
+                print_test("Calculator tool invoked", True, "Calculator tool was called for math question")
+            else:
+                print_test("Calculator tool invoked", False, "Calculator tool was NOT called (expected for math question)")
+                
+        else:
+            print_test("Tool-enabled chat endpoint", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+    except Exception as e:
+        print_test("Tool-enabled chat endpoint", False, f"Error: {str(e)}")
+
+def test_web_search():
+    """Test 11: Web Search - POST /api/search/web"""
+    print_section("11. WEB SEARCH")
+    
+    try:
+        payload = {"query": "Eiffel Tower height"}
+        response = requests.post(f"{BASE_URL}/search/web", json=payload, timeout=30)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_results = "results" in data or "answer" in data or isinstance(data, dict)
+            
+            details = f"Response keys: {list(data.keys())}"
+            if "results" in data:
+                results_count = len(data.get("results", []))
+                details += f", Results count: {results_count}"
+            
+            print_test("Web search endpoint", passed, details)
+        else:
+            print_test("Web search endpoint", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+    except Exception as e:
+        print_test("Web search endpoint", False, f"Error: {str(e)}")
+
+def test_knowledge_vault():
+    """Test 12: Knowledge Vault endpoints"""
+    print_section("12. KNOWLEDGE VAULT")
+    
+    # Get knowledge stats
+    try:
+        response = requests.get(f"{BASE_URL}/knowledge/stats", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_stats = isinstance(data, dict)
+            details = f"Stats keys: {list(data.keys())}"
+            print_test("Get knowledge stats", passed, details)
+        else:
+            print_test("Get knowledge stats", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get knowledge stats", False, f"Error: {str(e)}")
+    
+    # List knowledge documents
+    try:
+        response = requests.get(f"{BASE_URL}/knowledge/documents", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_documents = "documents" in data
+            has_total = "total" in data
+            
+            passed = has_documents and has_total
+            doc_count = len(data.get("documents", []))
+            total = data.get("total", 0)
+            
+            print_test("List knowledge documents", passed, f"Documents: {doc_count}, Total: {total}")
+        else:
+            print_test("List knowledge documents", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("List knowledge documents", False, f"Error: {str(e)}")
+
+def test_phone_calls():
+    """Test 13: Phone Calls (Mock) endpoints"""
+    print_section("13. PHONE CALLS (MOCK)")
+    
+    call_id = None
+    
+    # Create a mock phone call
+    try:
+        payload = {
+            "phone_number": "+1234567890",
+            "purpose": "Schedule appointment"
+        }
+        response = requests.post(f"{BASE_URL}/calls", json=payload, timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_id = "id" in data or "call_id" in data
+            call_id = data.get("id") or data.get("call_id")
+            
+            details = f"Call ID: {call_id}" if call_id else "Call created"
+            print_test("Create phone call", passed, details)
+        else:
+            print_test("Create phone call", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+    except Exception as e:
+        print_test("Create phone call", False, f"Error: {str(e)}")
+    
+    # List phone calls
+    try:
+        response = requests.get(f"{BASE_URL}/calls", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_calls = "calls" in data
+            has_total = "total" in data
+            
+            passed = has_calls and has_total
+            calls_count = len(data.get("calls", []))
+            total = data.get("total", 0)
+            
+            print_test("List phone calls", passed, f"Calls: {calls_count}, Total: {total}")
+        else:
+            print_test("List phone calls", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("List phone calls", False, f"Error: {str(e)}")
+    
+    # Get call stats summary
+    try:
+        response = requests.get(f"{BASE_URL}/calls/stats/summary", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_stats = isinstance(data, dict)
+            details = f"Stats keys: {list(data.keys())}"
+            print_test("Get call stats summary", passed, details)
+        else:
+            print_test("Get call stats summary", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get call stats summary", False, f"Error: {str(e)}")
+
+def test_dashboard():
+    """Test 14: Dashboard endpoints"""
+    print_section("14. DASHBOARD")
+    
+    # Get full dashboard
+    try:
+        response = requests.get(f"{BASE_URL}/dashboard", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_data = isinstance(data, dict)
+            details = f"Dashboard keys: {list(data.keys())}"
+            print_test("Get full dashboard", passed, details)
+        else:
+            print_test("Get full dashboard", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get full dashboard", False, f"Error: {str(e)}")
+    
+    # Get usage stats
+    try:
+        response = requests.get(f"{BASE_URL}/dashboard/usage", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_stats = isinstance(data, dict)
+            details = f"Usage stats keys: {list(data.keys())}"
+            print_test("Get usage stats", passed, details)
+        else:
+            print_test("Get usage stats", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get usage stats", False, f"Error: {str(e)}")
+    
+    # Get spending insights
+    try:
+        response = requests.get(f"{BASE_URL}/dashboard/spending", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_insights = isinstance(data, dict)
+            details = f"Spending insights keys: {list(data.keys())}"
+            print_test("Get spending insights", passed, details)
+        else:
+            print_test("Get spending insights", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get spending insights", False, f"Error: {str(e)}")
+
 def cleanup_test_data():
     """Clean up test data created during testing"""
     print_section("CLEANUP")
@@ -671,6 +892,13 @@ def main():
     test_daily_briefing()
     test_google_integration()
     test_notifications()
+    
+    # NEW FEATURE TESTS
+    test_chat_with_tools()
+    test_web_search()
+    test_knowledge_vault()
+    test_phone_calls()
+    test_dashboard()
     
     # Cleanup
     cleanup_test_data()

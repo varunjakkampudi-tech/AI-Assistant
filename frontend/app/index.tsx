@@ -165,16 +165,24 @@ export default function ChatScreen() {
       setPendingImage(null);
 
       try {
-        const res = await api.chat(
+        // Use tool-calling endpoint for enhanced AI capabilities
+        const res = await api.chatWithTools(
           sessionId,
           content,
           imgToSend?.b64 || null,
           imgToSend?.mime || null,
+          true // enable tools
         );
         setMessages((prev) => {
           const without = prev.filter((m) => m.id !== optimistic.id);
           return [...without, res.user_message, res.assistant_message];
         });
+        
+        // Log tool calls for debugging (can be used for UI later)
+        if (res.tool_calls && res.tool_calls.length > 0) {
+          console.log("Tool calls executed:", res.tool_calls.map(tc => tc.tool_name));
+        }
+        
         if (ttsEnabled && res.assistant_message?.content) {
           Speech.stop();
           setIsSpeaking(true);
