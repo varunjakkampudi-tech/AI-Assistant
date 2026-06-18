@@ -1,0 +1,45 @@
+{
+  "summary": "Phase 1 backend-only test run. Added /app/backend/tests/test_nova_phase1.py with 24 new tests covering memories (manual CRUD + filters), auto-extraction from chat (background task), cross-session memory recall, goals CRUD (with auto-complete on progress=100), reminders CRUD with status filter, session pin (pinned-first sorting), session search by title, chat with image attachment (Bedrock Nova Lite Converse), image persistence in ChatMessage.image_b64, and no _id leakage. All 24 new tests passed (62.9s) and the original 9 tests still pass (5.8s) => 33/33 = 100%. Memory auto-extraction was confirmed working — backend logs show 'Stored 1 memories from session ...' after the test chat, and a brand-new session asking 'When did my mother have her surgery?' got a reply containing 'July 10' (cross-session recall via injected system prompt). Chat-with-image accepted a real 1x1 PNG (decoded from a known-valid base64 PNG, not arbitrary bytes) and returned a non-empty assistant reply; the user ChatMessage row persisted with image_b64 populated. Pin endpoint correctly toggles and the GET /api/sessions response places pinned sessions before unpinned, then sorts updated_at desc within each group. Search uses case-insensitive regex on title. No backend code changes were required.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/sessions/{id}/messages", "issue": "Bedrock chat history loop hardcodes image_mime to 'image/jpeg' when re-sending prior messages with image_b64 (server.py L367). If the original message was a PNG/GIF/WEBP, the Converse call will mislabel its format. Currently the test PNGs still get a reply, but it is brittle. Suggest storing image_mime on ChatMessage and reusing it here."},
+      {"endpoint": "/api/memories", "issue": "Background extraction is best-effort and silently swallows errors (logger.warning only). For observability consider exposing an internal counter or last-error field, or at minimum log the raw Bedrock output when JSON parsing returns []."},
+      {"endpoint": "/api/sessions", "issue": "Two-step Python-side sort on (pinned, updated_at) works but is O(n log n) on the full collection. For large user histories, prefer a single MongoDB sort: .sort([('pinned', -1), ('updated_at', -1)]). Not blocking."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nova_phase1.py",
+    "/app/backend/tests/test_nova_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_phase1.xml"
+  ],
+  "action_items": [
+    "Consider persisting image_mime on ChatMessage and passing it back into _msg_block() when replaying history (server.py L367 currently hardcodes 'image/jpeg').",
+    "Optional: collapse the two Python sort() calls in list_sessions into one MongoDB compound sort.",
+    "Optional: improve memory-extraction observability (log raw Bedrock output on parse failure)."
+  ],
+  "critical_code_review_comments": [
+    "All new Phase 1 endpoints exclude MongoDB _id via {'_id': 0} projections — no ObjectId leaks observed in any response.",
+    "Memory dedup logic (category+subject -> update content) is sensible and prevents collection bloat.",
+    "Goal auto-complete on progress=100 is implemented correctly and verified.",
+    "Image content is sent to Bedrock Converse as content blocks with format=png/jpeg/gif/webp and source.bytes=<base64> — matches the documented Converse API contract.",
+    "Background memory extraction is correctly wired via FastAPI BackgroundTasks so chat latency is unaffected.",
+    "Pin toggle is idempotent-safe (reads current value, flips it) and updates updated_at."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nova_phase1.py (new — 24 Phase 1 tests)"
+  ],
+  "success_rate": {"backend": "100% (33/33 across both test files)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "All test sessions/memories/goals/reminders are prefixed with TEST_ and removed in an autouse module-scope teardown fixture (_final_cleanup). One real 1x1 red PNG (base64-encoded) is used for image-chat tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 1 pytest at /app/backend/tests/test_nova_phase1.py — extend (don't replace). Auto-extraction test waits up to 25s polling /api/memories every 3s for an Aruna/surgery/July memory; if Bedrock latency grows beyond that, bump the deadline. Cross-session recall test accepts any of 'july 10', 'aruna', or 'july'+'10' in the reply. Image test uses a real 1x1 red PNG decoded from a known-valid base64 string (not random bytes — Bedrock rejects invalid image bytes). Memory-extraction model occasionally tags facts under categories other than 'person', so we assert category ∈ MEMORY_CATEGORIES rather than ==person.",
+  "rca_of_issue": "No bug to RCA this iteration — all Phase 1 features behaved correctly end-to-end on the first run."
+}

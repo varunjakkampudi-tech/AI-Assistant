@@ -12,6 +12,7 @@ import {
   Keyboard,
   Share,
   ScrollView,
+  Image as RNImage,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
@@ -20,6 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as Speech from "expo-speech";
+import * as ImagePicker from "expo-image-picker";
 import {
   useAudioRecorder,
   useAudioRecorderState,
@@ -34,6 +36,7 @@ import { storage } from "@/src/utils/storage";
 import { api, ChatMessage } from "@/src/api";
 import VoiceOrb from "@/src/components/VoiceOrb";
 import TypingDots from "@/src/components/TypingDots";
+import MenuSheet from "@/src/components/MenuSheet";
 
 const SESSION_KEY = "nova_current_session";
 
@@ -52,16 +55,16 @@ export default function ChatScreen() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [pendingImage, setPendingImage] = useState<{ b64: string; mime: string; uri: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  // Voice recorder
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 200);
 
-  // Load (or create) the active session and its history.
   const hydrateActiveSession = useCallback(async () => {
     const existing = await storage.getItem<string>(SESSION_KEY, "");
     if (existing) {
@@ -72,7 +75,7 @@ export default function ChatScreen() {
         setError(null);
         return;
       } catch {
-        // session no longer exists — fall through to fresh chat
+        /* fall through */
       }
     }
     try {
@@ -85,59 +88,89 @@ export default function ChatScreen() {
     }
   }, []);
 
-  // Configure audio session for recording once on mount.
   useEffect(() => {
     setAudioModeAsync({ playsInSilentMode: true, allowsRecording: true }).catch(() => {});
   }, []);
 
-  // Re-hydrate whenever the screen comes back into focus (e.g. after picking a
-  // conversation from /history or starting a new chat from there).
   useFocusEffect(
     useCallback(() => {
       hydrateActiveSession();
-      return () => {
-        Speech.stop();
-      };
+      return () => Speech.stop();
     }, [hydrateActiveSession]),
   );
 
   const startNewChat = useCallback(async () => {
+    Speech.stop();
     try {
-      Speech.stop();
       const s = await api.createSession();
       await storage.setItem(SESSION_KEY, s.id);
       setSessionId(s.id);
       setMessages([]);
+      setPendingImage(null);
       setError(null);
     } catch (e: any) {
       setError(String(e?.message || e));
     }
   }, []);
 
+  const pickImage = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        setError("Photo permission denied");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.6,
+        base64: true,
+        allowsEditing: false,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const a = res.assets[0];
+      if (!a.base64) {
+        setError("Could not read image");
+        return;
+      }
+      const mime = a.mimeType || (a.uri?.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
+      setPendingImage({ b64: a.base64, mime, uri: a.uri });
+    } catch (e: any) {
+      setError(`Image error: ${e?.message || e}`);
+    }
+  }, []);
+
   const send = useCallback(
-    async (text: string) => {
-      const content = text.trim();
-      if (!content || !sessionId || sending) return;
+    async (textArg?: string) => {
+      const content = (textArg ?? input).trim();
+      const hasImage = !!pendingImage;
+      if ((!content && !hasImage) || !sessionId || sending) return;
       setInput("");
       Keyboard.dismiss();
       setSending(true);
       setError(null);
 
-      // optimistic user bubble
-      const tempUser: ChatMessage = {
+      const optimistic: ChatMessage = {
         id: `tmp-${Date.now()}`,
         session_id: sessionId,
         role: "user",
         content,
+        image_b64: pendingImage?.b64 || null,
         created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, tempUser]);
+      setMessages((prev) => [...prev, optimistic]);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      const imgToSend = pendingImage;
+      setPendingImage(null);
 
       try {
-        const res = await api.chat(sessionId, content);
+        const res = await api.chat(
+          sessionId,
+          content,
+          imgToSend?.b64 || null,
+          imgToSend?.mime || null,
+        );
         setMessages((prev) => {
-          const without = prev.filter((m) => m.id !== tempUser.id);
+          const without = prev.filter((m) => m.id !== optimistic.id);
           return [...without, res.user_message, res.assistant_message];
         });
         if (ttsEnabled && res.assistant_message?.content) {
@@ -146,12 +179,12 @@ export default function ChatScreen() {
         }
       } catch (e: any) {
         setError(String(e?.message || e));
-        setMessages((prev) => prev.filter((m) => m.id !== tempUser.id));
+        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
       } finally {
         setSending(false);
       }
     },
-    [sessionId, sending, ttsEnabled],
+    [input, pendingImage, sessionId, sending, ttsEnabled],
   );
 
   const startRecording = useCallback(async () => {
@@ -193,7 +226,6 @@ export default function ChatScreen() {
     }
   }, [recorder, send]);
 
-  // Auto-scroll on new messages
   useEffect(() => {
     if (messages.length > 0) {
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
@@ -209,10 +241,7 @@ export default function ChatScreen() {
       .map((m) => `${m.role === "user" ? "You" : "Nova"}: ${m.content}`)
       .join("\n\n");
     try {
-      await Share.share({
-        message: `My conversation with Nova\n\n${text}\n\n— Sent from Nova AI`,
-        title: "Nova conversation",
-      });
+      await Share.share({ message: `My conversation with Nova\n\n${text}\n\n— Sent from Nova AI` });
     } catch (e: any) {
       setError(`Share failed: ${e?.message || e}`);
     }
@@ -223,9 +252,18 @@ export default function ChatScreen() {
       return (
         <View style={styles.userRow} testID={`message-user-${item.id}`}>
           <View style={styles.userBubble}>
-            <Text style={styles.userText} selectable>
-              {item.content}
-            </Text>
+            {item.image_b64 && (
+              <RNImage
+                source={{ uri: `data:image/jpeg;base64,${item.image_b64}` }}
+                style={styles.userImage}
+                resizeMode="cover"
+              />
+            )}
+            {!!item.content && (
+              <Text style={styles.userText} selectable>
+                {item.content}
+              </Text>
+            )}
           </View>
         </View>
       );
@@ -246,7 +284,6 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.root} testID="chat-screen">
-      {/* Background texture */}
       <Image
         source={{
           uri: "https://images.pexels.com/photos/2387818/pexels-photo-2387818.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
@@ -260,13 +297,12 @@ export default function ChatScreen() {
       />
 
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        {/* Header */}
         <View style={styles.header} testID="chat-header">
           <Pressable
             style={styles.headerBtn}
-            onPress={() => router.push("/history")}
+            onPress={() => setMenuOpen(true)}
             hitSlop={10}
-            testID="open-history-button"
+            testID="open-menu-button"
           >
             <Ionicons name="menu" size={22} color={theme.color.onSurface} />
           </Pressable>
@@ -306,7 +342,6 @@ export default function ChatScreen() {
           </Pressable>
         </View>
 
-        {/* Recording overlay */}
         {isRecording && (
           <View style={styles.recordingOverlay} pointerEvents="box-none" testID="recording-overlay">
             <VoiceOrb active size={240} />
@@ -315,13 +350,12 @@ export default function ChatScreen() {
           </View>
         )}
 
-        {/* Chat area */}
         {!isRecording && empty ? (
           <View style={styles.emptyWrap} testID="empty-state">
             <VoiceOrb active size={160} />
             <Text style={styles.emptyTitle}>How may I help today?</Text>
             <Text style={styles.emptySubtitle}>
-              Ask anything — type or hold the mic to speak.
+              Ask anything — type, hold the mic, or attach an image.
             </Text>
             <ScrollView
               horizontal
@@ -365,7 +399,6 @@ export default function ChatScreen() {
           />
         )}
 
-        {/* Error toast */}
         {error && (
           <Pressable onPress={() => setError(null)} style={styles.errorToast} testID="error-toast">
             <Ionicons name="alert-circle" size={16} color="#fff" />
@@ -376,14 +409,35 @@ export default function ChatScreen() {
         )}
       </SafeAreaView>
 
-      {/* Glass input bar */}
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
         <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {pendingImage && (
+            <View style={styles.imagePreviewRow} testID="pending-image-preview">
+              <RNImage source={{ uri: pendingImage.uri }} style={styles.imagePreview} />
+              <Pressable
+                onPress={() => setPendingImage(null)}
+                style={styles.imageClear}
+                hitSlop={10}
+                testID="clear-image-button"
+              >
+                <Ionicons name="close" size={14} color={theme.color.onSurface} />
+              </Pressable>
+            </View>
+          )}
           <BlurView intensity={60} tint="dark" style={styles.inputBlur}>
             <View style={styles.inputRow}>
+              <Pressable
+                style={styles.iconBtn}
+                onPress={pickImage}
+                hitSlop={10}
+                disabled={isBusy || isRecording}
+                testID="attach-image-button"
+              >
+                <Ionicons name="image-outline" size={20} color={theme.color.onSurfaceSecondary} />
+              </Pressable>
               <TextInput
                 style={styles.input}
                 placeholder={transcribing ? "Transcribing…" : "Message Nova…"}
@@ -393,13 +447,13 @@ export default function ChatScreen() {
                 editable={!isBusy && !isRecording}
                 multiline
                 returnKeyType="send"
-                onSubmitEditing={() => send(input)}
+                onSubmitEditing={() => send()}
                 testID="chat-input"
               />
-              {input.trim().length > 0 ? (
+              {input.trim().length > 0 || pendingImage ? (
                 <Pressable
                   style={[styles.sendBtn, sending && { opacity: 0.5 }]}
-                  onPress={() => send(input)}
+                  onPress={() => send()}
                   disabled={sending}
                   testID="send-button"
                 >
@@ -431,6 +485,12 @@ export default function ChatScreen() {
           </BlurView>
         </View>
       </KeyboardAvoidingView>
+
+      <MenuSheet
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onNewChat={startNewChat}
+      />
     </View>
   );
 }
@@ -472,7 +532,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.sm,
-    paddingBottom: 160,
+    paddingBottom: 180,
     gap: theme.spacing.lg,
   },
   userRow: { alignItems: "flex-end" },
@@ -485,17 +545,11 @@ const styles = StyleSheet.create({
     maxWidth: "85%",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.color.border,
+    gap: theme.spacing.sm,
   },
-  userText: {
-    color: theme.color.onSurfaceTertiary,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  aiRow: {
-    flexDirection: "row",
-    gap: theme.spacing.md,
-    paddingRight: theme.spacing.lg,
-  },
+  userImage: { width: 220, height: 160, borderRadius: theme.radius.md },
+  userText: { color: theme.color.onSurfaceTertiary, fontSize: 15, lineHeight: 22 },
+  aiRow: { flexDirection: "row", gap: theme.spacing.md, paddingRight: theme.spacing.lg },
   aiBadge: {
     width: 28,
     height: 28,
@@ -507,12 +561,7 @@ const styles = StyleSheet.create({
     borderColor: theme.color.brandSecondary,
     marginTop: 2,
   },
-  aiText: {
-    flex: 1,
-    color: theme.color.onSurface,
-    fontSize: 16,
-    lineHeight: 24,
-  },
+  aiText: { flex: 1, color: theme.color.onSurface, fontSize: 16, lineHeight: 24 },
   emptyWrap: {
     flex: 1,
     alignItems: "center",
@@ -581,6 +630,28 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     paddingHorizontal: theme.spacing.lg,
+    gap: theme.spacing.sm,
+  },
+  imagePreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: theme.color.surfaceTertiary,
+    borderRadius: theme.radius.md,
+    padding: 4,
+    gap: theme.spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+  },
+  imagePreview: { width: 56, height: 56, borderRadius: theme.radius.sm },
+  imageClear: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.color.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: theme.spacing.sm,
   },
   inputBlur: {
     borderRadius: theme.radius.lg,
@@ -595,6 +666,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.sm,
     gap: theme.spacing.sm,
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
   },
   input: {
     flex: 1,
