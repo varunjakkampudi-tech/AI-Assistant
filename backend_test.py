@@ -40,6 +40,8 @@ test_data = {
     "goal_id": None,
     "reminder_id": None,
     "notification_id": None,
+    "call_id": None,
+    "missed_call_reminder_id": None,
 }
 
 def test_health_check():
@@ -861,6 +863,287 @@ def test_dashboard():
     except Exception as e:
         print_test("Get spending insights", False, f"Error: {str(e)}")
 
+def test_elevenlabs_voice():
+    """Test 16: ElevenLabs Voice Integration"""
+    print_section("16. ELEVENLABS VOICE")
+    
+    # Test 1: Voice Status
+    try:
+        response = requests.get(f"{BASE_URL}/voice/status", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            is_enabled = data.get("enabled", False)
+            has_voice_id = "voice_id" in data if is_enabled else True
+            
+            if is_enabled:
+                voice_id = data.get("voice_id", "")
+                voice_info = data.get("voice_info", {})
+                details = f"Enabled: {is_enabled}, Voice ID: {voice_id[:8]}..., Voice Name: {voice_info.get('name', 'N/A')}"
+                print_test("Get voice status", passed, details)
+            else:
+                print_test("Get voice status", passed, f"ElevenLabs not configured (expected in test environment)")
+        else:
+            print_test("Get voice status", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get voice status", False, f"Error: {str(e)}")
+    
+    # Test 2: Text-to-Speech
+    try:
+        payload = {"text": "Hello from Nova"}
+        response = requests.post(f"{BASE_URL}/voice/tts", json=payload, timeout=30)
+        
+        # If ElevenLabs is configured, should return 200 with audio
+        # If not configured, should return 400
+        if response.status_code == 200:
+            data = response.json()
+            has_audio = "audio_base64" in data
+            has_format = data.get("format") == "mp3"
+            text_length = data.get("text_length", 0)
+            
+            passed = has_audio and has_format and text_length > 0
+            details = f"Audio generated: {len(data.get('audio_base64', '')) > 0}, Format: {data.get('format')}, Text length: {text_length}"
+            print_test("Text-to-speech conversion", passed, details)
+        elif response.status_code == 400:
+            # Expected if ElevenLabs not configured
+            print_test("Text-to-speech conversion", True, "ElevenLabs not configured (expected in test environment)")
+        else:
+            print_test("Text-to-speech conversion", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+    except Exception as e:
+        print_test("Text-to-speech conversion", False, f"Error: {str(e)}")
+    
+    # Test 3: List Voices
+    try:
+        response = requests.get(f"{BASE_URL}/voice/voices", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            voices = data.get("voices", [])
+            details = f"Available voices: {len(voices)}"
+            print_test("List available voices", passed, details)
+        else:
+            print_test("List available voices", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("List available voices", False, f"Error: {str(e)}")
+
+
+def test_incoming_calls():
+    """Test 17: Incoming Call Management"""
+    print_section("17. INCOMING CALL MANAGEMENT")
+    
+    # Test 1: Register Incoming Call
+    try:
+        payload = {
+            "phone_number": "+919876543210",
+            "contact_name": "Mom"
+        }
+        response = requests.post(f"{BASE_URL}/incoming-calls/register", json=payload, timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            test_data["call_id"] = data.get("id")
+            has_id = "id" in data
+            has_phone = data.get("phone_number") == "+919876543210"
+            has_contact = data.get("contact_name") == "Mom"
+            status_is_ringing = data.get("status") == "ringing"
+            
+            passed = has_id and has_phone and has_contact and status_is_ringing
+            details = f"Call ID: {test_data['call_id']}, Phone: {data.get('phone_number')}, Contact: {data.get('contact_name')}, Status: {data.get('status')}"
+            print_test("Register incoming call", passed, details)
+        else:
+            print_test("Register incoming call", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+    except Exception as e:
+        print_test("Register incoming call", False, f"Error: {str(e)}")
+    
+    # Test 2: Get Active Call
+    try:
+        response = requests.get(f"{BASE_URL}/incoming-calls/active", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            call = data.get("call")
+            if call:
+                is_active = call.get("status") in ["ringing", "answered"]
+                details = f"Active call found: {call.get('phone_number')}, Status: {call.get('status')}"
+                print_test("Get active call", passed and is_active, details)
+            else:
+                print_test("Get active call", True, "No active call (expected if call was ended)")
+        else:
+            print_test("Get active call", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get active call", False, f"Error: {str(e)}")
+    
+    # Test 3: Answer Call with AI
+    if test_data["call_id"]:
+        try:
+            response = requests.post(
+                f"{BASE_URL}/incoming-calls/{test_data['call_id']}/answer?ai_answer=true",
+                timeout=30
+            )
+            passed = response.status_code == 200
+            
+            if passed:
+                data = response.json()
+                call = data.get("call")
+                has_call = call is not None
+                is_answered = call.get("status") == "answered" if call else False
+                ai_answered = call.get("ai_answered", False) if call else False
+                has_greeting = "greeting_audio_base64" in data or "greeting_text" in data
+                
+                passed = has_call and is_answered and ai_answered
+                details = f"Status: {call.get('status') if call else 'N/A'}, AI Answered: {ai_answered}, Has Greeting: {has_greeting}"
+                print_test("Answer call with AI", passed, details)
+            else:
+                print_test("Answer call with AI", False, f"Status: {response.status_code}, Response: {response.text[:200]}")
+        except Exception as e:
+            print_test("Answer call with AI", False, f"Error: {str(e)}")
+    
+    # Test 4: End Call
+    if test_data["call_id"]:
+        try:
+            response = requests.post(
+                f"{BASE_URL}/incoming-calls/{test_data['call_id']}/end",
+                timeout=10
+            )
+            passed = response.status_code == 200
+            
+            if passed:
+                data = response.json()
+                call = data.get("call")
+                is_ended = call.get("status") == "ended" if call else False
+                has_duration = call.get("duration_seconds", 0) >= 0 if call else False
+                
+                passed = is_ended and has_duration
+                details = f"Status: {call.get('status') if call else 'N/A'}, Duration: {call.get('duration_seconds', 0)}s"
+                print_test("End call", passed, details)
+            else:
+                print_test("End call", False, f"Status: {response.status_code}")
+        except Exception as e:
+            print_test("End call", False, f"Error: {str(e)}")
+    
+    # Test 5: List All Calls
+    try:
+        response = requests.get(f"{BASE_URL}/incoming-calls", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            calls = data.get("calls", [])
+            details = f"Total calls: {len(calls)}"
+            print_test("List all calls", passed, details)
+        else:
+            print_test("List all calls", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("List all calls", False, f"Error: {str(e)}")
+    
+    # Test 6: Get Call Stats
+    try:
+        response = requests.get(f"{BASE_URL}/incoming-calls/stats", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            has_total = "total_calls" in data
+            has_missed = "missed_calls" in data
+            has_answered = "answered_calls" in data
+            
+            passed = has_total and has_missed and has_answered
+            details = f"Total: {data.get('total_calls', 0)}, Missed: {data.get('missed_calls', 0)}, Answered: {data.get('answered_calls', 0)}, AI Answered: {data.get('ai_answered_calls', 0)}"
+            print_test("Get call statistics", passed, details)
+        else:
+            print_test("Get call statistics", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get call statistics", False, f"Error: {str(e)}")
+
+
+def test_missed_calls():
+    """Test 18: Missed Call Reminders"""
+    print_section("18. MISSED CALL REMINDERS")
+    
+    # Test 1: Register and Mark Call as Missed
+    try:
+        # First register a new call
+        payload = {
+            "phone_number": "+919123456789",
+            "contact_name": "Dad"
+        }
+        response = requests.post(f"{BASE_URL}/incoming-calls/register", json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            call_data = response.json()
+            missed_call_id = call_data.get("id")
+            
+            # Mark it as missed
+            response = requests.post(
+                f"{BASE_URL}/incoming-calls/{missed_call_id}/missed",
+                timeout=10
+            )
+            passed = response.status_code == 200
+            
+            if passed:
+                data = response.json()
+                call = data.get("call")
+                is_missed = call.get("status") == "missed" if call else False
+                reminder_created = data.get("reminder_created", False)
+                
+                passed = is_missed and reminder_created
+                details = f"Status: {call.get('status') if call else 'N/A'}, Reminder Created: {reminder_created}"
+                print_test("Mark call as missed", passed, details)
+            else:
+                print_test("Mark call as missed", False, f"Status: {response.status_code}")
+        else:
+            print_test("Mark call as missed", False, f"Failed to register call: {response.status_code}")
+    except Exception as e:
+        print_test("Mark call as missed", False, f"Error: {str(e)}")
+    
+    # Test 2: Get Missed Call Reminders
+    try:
+        response = requests.get(f"{BASE_URL}/missed-calls?status=pending", timeout=10)
+        passed = response.status_code == 200
+        
+        if passed:
+            data = response.json()
+            reminders = data.get("reminders", [])
+            
+            if len(reminders) > 0:
+                test_data["missed_call_reminder_id"] = reminders[0].get("id")
+                reminder = reminders[0]
+                has_phone = "phone_number" in reminder
+                has_status = reminder.get("status") == "pending"
+                
+                passed = has_phone and has_status
+                details = f"Pending reminders: {len(reminders)}, Phone: {reminder.get('phone_number')}, Contact: {reminder.get('contact_name', 'N/A')}"
+                print_test("Get missed call reminders", passed, details)
+            else:
+                print_test("Get missed call reminders", True, "No pending reminders found")
+        else:
+            print_test("Get missed call reminders", False, f"Status: {response.status_code}")
+    except Exception as e:
+        print_test("Get missed call reminders", False, f"Error: {str(e)}")
+    
+    # Test 3: Dismiss Reminder
+    if test_data["missed_call_reminder_id"]:
+        try:
+            response = requests.post(
+                f"{BASE_URL}/missed-calls/{test_data['missed_call_reminder_id']}/dismiss",
+                timeout=10
+            )
+            passed = response.status_code == 200
+            
+            if passed:
+                data = response.json()
+                is_ok = data.get("ok", False)
+                details = f"Reminder dismissed: {is_ok}"
+                print_test("Dismiss missed call reminder", passed and is_ok, details)
+            else:
+                print_test("Dismiss missed call reminder", False, f"Status: {response.status_code}")
+        except Exception as e:
+            print_test("Dismiss missed call reminder", False, f"Error: {str(e)}")
+
 def cleanup_test_data():
     """Clean up test data created during testing"""
     print_section("CLEANUP")
@@ -899,6 +1182,11 @@ def main():
     test_knowledge_vault()
     test_phone_calls()
     test_dashboard()
+    
+    # ELEVENLABS VOICE & INCOMING CALLS TESTS
+    test_elevenlabs_voice()
+    test_incoming_calls()
+    test_missed_calls()
     
     # Cleanup
     cleanup_test_data()

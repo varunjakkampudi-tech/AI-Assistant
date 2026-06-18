@@ -21,6 +21,8 @@ import tools as tool_framework
 import knowledge_vault as kv
 import phone_calls as pc
 import dashboard as dash
+import elevenlabs_voice as el_voice
+import call_manager as cm
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -42,6 +44,14 @@ BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
 BEDROCK_URL = f"https://bedrock-runtime.{AWS_REGION}.amazonaws.com/model/{BEDROCK_MODEL_ID}/converse"
 
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+
+# ElevenLabs Voice
+ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', '')
+ELEVENLABS_VOICE_ID = os.environ.get('ELEVENLABS_VOICE_ID', '')
+elevenlabs = el_voice.init_elevenlabs(ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID)
+
+# Call Manager
+call_manager: cm.CallManager = None  # Initialized after db
 
 BASE_SYSTEM_PROMPT = (
     "You are Nova — a warm, articulate, and helpful personal AI assistant. "
@@ -1346,6 +1356,191 @@ async def get_notification_stats():
         "total": total,
         "by_kind": by_kind
     }
+
+
+# ==================== ELEVENLABS VOICE ====================
+
+@api_router.get("/voice/status")
+async def get_voice_status():
+    """Check ElevenLabs voice configuration status."""
+    if not elevenlabs or not elevenlabs.enabled:
+        return {"enabled": False, "message": "ElevenLabs not configured"}
+    
+    info = await elevenlabs.get_voice_info()
+    subscription = await elevenlabs.get_subscription_info()
+    
+    return {
+        "enabled": True,
+        "voice_id": ELEVENLABS_VOICE_ID,
+        "voice_info": info,
+        "subscription": subscription
+    }
+
+
+class TTSRequest(BaseModel):
+    text: str
+    stability: float = 0.5
+    similarity_boost: float = 0.75
+
+
+@api_router.post("/voice/tts")
+async def text_to_speech(body: TTSRequest):
+    """Convert text to speech using the user's cloned voice."""
+    if not elevenlabs or not elevenlabs.enabled:
+        raise HTTPException(400, "ElevenLabs not configured")
+    
+    audio_b64 = await elevenlabs.text_to_speech_base64(
+        body.text,
+        stability=body.stability,
+        similarity_boost=body.similarity_boost
+    )
+    
+    if not audio_b64:
+        raise HTTPException(500, "TTS generation failed")
+    
+    return {
+        "audio_base64": audio_b64,
+        "format": "mp3",
+        "text_length": len(body.text)
+    }
+
+
+@api_router.get("/voice/voices")
+async def list_voices():
+    """List all available ElevenLabs voices."""
+    if not elevenlabs:
+        return {"voices": []}
+    
+    voices = await elevenlabs.list_voices()
+    return {"voices": voices}
+
+
+# ==================== INCOMING CALLS & MISSED CALL REMINDERS ====================
+
+# Initialize call manager (needs db, so done here)
+_call_manager: cm.CallManager = None
+
+def get_call_manager() -> cm.CallManager:
+    global _call_manager
+    if _call_manager is None:
+        _call_manager = cm.CallManager(db)
+    return _call_manager
+
+
+class IncomingCallRequest(BaseModel):
+    phone_number: str
+    contact_name: Optional[str] = None
+
+
+@api_router.post("/incoming-calls/register")
+async def register_incoming_call(body: IncomingCallRequest):
+    """Register a new incoming call (from native Android module)."""
+    manager = get_call_manager()
+    call = await manager.register_incoming_call(body.phone_number, body.contact_name)
+    return call.dict()
+
+
+@api_router.get("/incoming-calls/active")
+async def get_active_call():
+    """Get the currently active/ringing call."""
+    manager = get_call_manager()
+    call = await manager.get_active_call()
+    return {"call": call}
+
+
+@api_router.post("/incoming-calls/{call_id}/answer")
+async def answer_incoming_call(call_id: str, ai_answer: bool = False):
+    """Answer an incoming call. If ai_answer=true, Nova will answer with cloned voice."""
+    manager = get_call_manager()
+    call = await manager.answer_call(call_id, ai_answer)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    
+    response = {"call": call}
+    
+    # If AI is answering, generate greeting audio
+    if ai_answer and elevenlabs and elevenlabs.enabled:
+        greeting = f"Hello! This is Nova, {'your' if call.get('contact_name') else 'the'} AI assistant. How can I help?"
+        audio_b64 = await elevenlabs.text_to_speech_base64(greeting)
+        if audio_b64:
+            response["greeting_audio_base64"] = audio_b64
+            response["greeting_text"] = greeting
+    
+    return response
+
+
+@api_router.post("/incoming-calls/{call_id}/missed")
+async def mark_call_missed(call_id: str):
+    """Mark a call as missed and create a reminder."""
+    manager = get_call_manager()
+    call = await manager.mark_call_missed(call_id)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    return {"call": call, "reminder_created": True}
+
+
+@api_router.post("/incoming-calls/{call_id}/end")
+async def end_incoming_call(call_id: str, summary: Optional[str] = None):
+    """End a call."""
+    manager = get_call_manager()
+    call = await manager.end_call(call_id, summary)
+    if not call:
+        raise HTTPException(404, "Call not found")
+    return {"call": call}
+
+
+@api_router.get("/incoming-calls")
+async def list_incoming_calls(call_type: Optional[str] = None, limit: int = 50):
+    """List incoming calls with optional filtering."""
+    manager = get_call_manager()
+    calls = await manager.list_calls(call_type, limit)
+    return {"calls": calls}
+
+
+@api_router.get("/incoming-calls/stats")
+async def get_incoming_call_stats():
+    """Get incoming call statistics."""
+    manager = get_call_manager()
+    return await manager.get_call_stats()
+
+
+# ==================== MISSED CALL REMINDERS ====================
+
+@api_router.get("/missed-calls")
+async def get_missed_calls(status: str = "pending"):
+    """Get missed call reminders."""
+    manager = get_call_manager()
+    reminders = await manager.get_missed_calls(status)
+    return {"reminders": reminders}
+
+
+@api_router.post("/missed-calls/{reminder_id}/dismiss")
+async def dismiss_missed_call_reminder(reminder_id: str):
+    """Dismiss a missed call reminder."""
+    manager = get_call_manager()
+    success = await manager.dismiss_reminder(reminder_id)
+    if not success:
+        raise HTTPException(404, "Reminder not found")
+    return {"ok": True}
+
+
+@api_router.post("/missed-calls/{reminder_id}/called-back")
+async def mark_called_back(reminder_id: str):
+    """Mark that the user called back."""
+    manager = get_call_manager()
+    success = await manager.mark_called_back(reminder_id)
+    if not success:
+        raise HTTPException(404, "Reminder not found")
+    return {"ok": True}
+
+
+# ==================== CALL COMMAND PARSER (for chat) ====================
+
+@api_router.post("/parse-call-command")
+async def parse_call_command(message: str):
+    """Parse a message for call-related commands."""
+    command = cm.parse_call_command(message)
+    return {"command": command}
 
 
 app.include_router(api_router)

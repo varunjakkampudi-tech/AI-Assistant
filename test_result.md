@@ -273,6 +273,42 @@ backend:
         agent: "testing"
         comment: "Dashboard endpoints fully functional. GET /api/dashboard returns complete dashboard data (generated_at, usage, spending, productivity, insights). GET /api/dashboard/usage returns usage statistics (period_days, totals, recent, daily_messages, goals, reminders, memories_by_category). GET /api/dashboard/spending returns spending insights (period_days, has_data, message). All endpoints return 200 OK."
 
+  - task: "ElevenLabs Voice Integration"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "ElevenLabs Voice integration fully functional. GET /api/voice/status returns enabled=true with voice info (Voice ID: Lr9nbI5A..., Voice Name: My Voice). POST /api/voice/tts successfully generates audio_base64 for text input (mp3 format, actual audio generated - NOT MOCKED). GET /api/voice/voices lists 22 available voices. All 3 endpoints return 200 OK. ElevenLabs API is properly configured and generating real audio."
+
+  - task: "Incoming Call Management"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Incoming call management fully functional. POST /api/incoming-calls/register successfully registers calls with phone number and contact name (status: ringing). GET /api/incoming-calls/active returns active call correctly. POST /api/incoming-calls/{id}/answer?ai_answer=true answers with AI and generates greeting audio via ElevenLabs. POST /api/incoming-calls/{id}/end ends call with duration tracking. GET /api/incoming-calls lists all calls. GET /api/incoming-calls/stats returns statistics (Total: 5, Missed: 2, Answered: 0, AI Answered: 3). All 6 endpoints return 200 OK."
+
+  - task: "Missed Call Reminders"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "Missed call reminders fully functional. POST /api/incoming-calls/{id}/missed marks call as missed and creates reminder. GET /api/missed-calls returns pending reminders with phone number and contact name. POST /api/missed-calls/{id}/dismiss successfully dismisses reminders. All 3 endpoints return 200 OK. Complete missed call flow working correctly."
+
 frontend:
   - task: "Frontend Testing"
     implemented: true
@@ -288,14 +324,14 @@ frontend:
 
 metadata:
   created_by: "testing_agent"
-  version: "1.1"
-  test_sequence: 2
+  version: "1.2"
+  test_sequence: 3
   run_ui: false
   last_tested: "2026-06-18"
 
 test_plan:
   current_focus:
-    - "All backend endpoints tested and verified including new features"
+    - "All backend endpoints tested and verified including ElevenLabs Voice and Incoming Calls features"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"
@@ -305,3 +341,5 @@ agent_communication:
     message: "Comprehensive backend testing completed. All 35 tests passed successfully. AWS Bedrock integration with Amazon Nova Lite model is working correctly. Google Calendar and Gmail integrations are functional. All CRUD operations for sessions, memories, goals, reminders, and notifications are working as expected. Daily briefing with weather integration is operational. No critical issues found."
   - agent: "testing"
     message: "NEW FEATURES TESTING COMPLETED (2026-06-18): All 5 new feature sets tested and verified working correctly. (1) Tool-enabled Chat: Calculator tool successfully invoked for math operations. (2) Web Search: DuckDuckGo integration returning 5 results per query. (3) Knowledge Vault: Stats and document listing endpoints operational (0 documents currently). (4) Phone Calls Mock: Create, list, and stats endpoints working. (5) Dashboard Analytics: Full dashboard, usage stats, and spending insights all functional. Total: 50 backend tests passed. No critical issues found."
+  - agent: "testing"
+    message: "ELEVENLABS VOICE & INCOMING CALLS TESTING COMPLETED (2026-06-18): All 12 new endpoint tests passed successfully. (1) ElevenLabs Voice: Voice status, TTS generation with actual audio (NOT MOCKED), and voice listing all working. ElevenLabs API properly configured with 22 available voices. (2) Incoming Call Management: Register, get active, answer with AI (generates greeting audio), end call, list calls, and stats all functional. (3) Missed Call Reminders: Mark as missed, get reminders, and dismiss all working correctly. Complete call management flow verified. Total: 62 backend tests passed. No critical issues found."

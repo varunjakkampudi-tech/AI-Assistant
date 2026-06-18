@@ -249,4 +249,44 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ app_name, title, text }),
     }),
+
+  // ==================== ELEVENLABS VOICE ====================
+  
+  voiceStatus: () => jfetch<any>("/voice/status"),
+  textToSpeech: (text: string, stability = 0.5, similarity_boost = 0.75) =>
+    jfetch<{ audio_base64: string; format: string; text_length: number }>("/voice/tts", {
+      method: "POST",
+      body: JSON.stringify({ text, stability, similarity_boost }),
+    }),
+  listVoices: () => jfetch<any>("/voice/voices"),
+
+  // ==================== INCOMING CALLS ====================
+  
+  registerIncomingCall: (phone_number: string, contact_name?: string) =>
+    jfetch<any>("/incoming-calls/register", {
+      method: "POST",
+      body: JSON.stringify({ phone_number, contact_name }),
+    }),
+  getActiveCall: () => jfetch<{ call: any | null }>("/incoming-calls/active"),
+  answerCall: (call_id: string, ai_answer = false) =>
+    jfetch<any>(`/incoming-calls/${call_id}/answer?ai_answer=${ai_answer}`, { method: "POST" }),
+  markCallMissed: (call_id: string) =>
+    jfetch<any>(`/incoming-calls/${call_id}/missed`, { method: "POST" }),
+  endIncomingCall: (call_id: string, summary?: string) =>
+    jfetch<any>(`/incoming-calls/${call_id}/end`, {
+      method: "POST",
+      body: summary ? JSON.stringify({ summary }) : undefined,
+    }),
+  listIncomingCalls: (call_type?: string, limit = 50) =>
+    jfetch<{ calls: any[] }>(`/incoming-calls?limit=${limit}${call_type ? `&call_type=${call_type}` : ""}`),
+  incomingCallStats: () => jfetch<any>("/incoming-calls/stats"),
+
+  // ==================== MISSED CALL REMINDERS ====================
+  
+  getMissedCalls: (status = "pending") =>
+    jfetch<{ reminders: any[] }>(`/missed-calls?status=${status}`),
+  dismissMissedCall: (reminder_id: string) =>
+    jfetch<{ ok: boolean }>(`/missed-calls/${reminder_id}/dismiss`, { method: "POST" }),
+  markCalledBack: (reminder_id: string) =>
+    jfetch<{ ok: boolean }>(`/missed-calls/${reminder_id}/called-back`, { method: "POST" }),
 };
