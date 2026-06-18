@@ -540,6 +540,98 @@ async def delete_reminder(reminder_id: str):
     return {"ok": True}
 
 
+# ----- Daily Briefing -----
+WEATHER_CODES = {
+    0: "Clear sky", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast",
+    45: "Fog", 48: "Fog", 51: "Drizzle", 53: "Drizzle", 55: "Drizzle",
+    61: "Light rain", 63: "Rain", 65: "Heavy rain",
+    71: "Light snow", 73: "Snow", 75: "Heavy snow",
+    80: "Showers", 81: "Showers", 82: "Heavy showers",
+    95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm",
+}
+
+
+async def _fetch_weather(lat: float, lon: float) -> Optional[dict]:
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            "&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m"
+            "&timezone=auto"
+        )
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            r = await http.get(url)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            cur = data.get("current", {})
+            return {
+                "temperature_c": cur.get("temperature_2m"),
+                "humidity": cur.get("relative_humidity_2m"),
+                "wind_kph": cur.get("wind_speed_10m"),
+                "code": cur.get("weather_code"),
+                "summary": WEATHER_CODES.get(int(cur.get("weather_code") or -1), "Unknown"),
+                "timezone": data.get("timezone"),
+            }
+    except Exception as e:
+        logger.warning("Weather fetch failed: %s", e)
+        return None
+
+
+def _greeting_for_now(tz_offset_minutes: int = 0) -> str:
+    # Naive: just use UTC hour shifted by offset
+    hour = (datetime.now(timezone.utc).hour + tz_offset_minutes // 60) % 24
+    if 5 <= hour < 12:
+        return "Good morning"
+    if 12 <= hour < 17:
+        return "Good afternoon"
+    if 17 <= hour < 22:
+        return "Good evening"
+    return "Hello"
+
+
+@api_router.get("/briefing")
+async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_offset: int = 0):
+    """Daily briefing aggregating weather, pending reminders, active goals, upcoming dates from memories."""
+    # Try to resolve the user's name from memories (preference: name=...)
+    name_doc = await db.memories.find_one(
+        {"category": "preference", "subject": {"$regex": "name", "$options": "i"}},
+        {"_id": 0},
+    )
+    name = None
+    if name_doc:
+        # content might be "User's name is Varun" — best-effort grab the last word
+        m = re.search(r"(?:is|=|:)\s*([A-Z][A-Za-z'-]+)", name_doc.get("content", ""))
+        if m:
+            name = m.group(1)
+
+    weather = None
+    if lat is not None and lon is not None:
+        weather = await _fetch_weather(lat, lon)
+
+    pending = await db.reminders.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    active_goals = await db.goals.find({"status": "active"}, {"_id": 0}).sort("updated_at", -1).to_list(10)
+    date_memories = await db.memories.find(
+        {"category": {"$in": ["date", "meeting"]}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(10)
+    session_count = await db.chat_sessions.count_documents({})
+
+    return {
+        "greeting": _greeting_for_now(tz_offset),
+        "name": name,
+        "weather": weather,
+        "pending_reminders": pending,
+        "active_goals": active_goals,
+        "important_dates": date_memories,
+        "session_count": session_count,
+        "integrations": {
+            "google_calendar": {"connected": False, "note": "Connect requires Google Cloud OAuth client with calendar.events scope."},
+            "gmail": {"connected": False, "note": "Connect requires Google Cloud OAuth client with gmail.readonly + gmail.send scopes."},
+            "outlook": {"connected": False, "note": "Connect requires Azure AD app credentials."},
+        },
+    }
+
+
 app.include_router(api_router)
 
 app.add_middleware(

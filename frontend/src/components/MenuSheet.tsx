@@ -14,6 +14,7 @@ interface Item {
 }
 
 const ITEMS: Item[] = [
+  { icon: "sunny-outline", label: "Daily briefing", route: "/briefing", testID: "menu-briefing" },
   { icon: "chatbubbles-outline", label: "Conversations", route: "/history", testID: "menu-history" },
   { icon: "sparkles-outline", label: "Memories", route: "/memories", testID: "menu-memories" },
   { icon: "trophy-outline", label: "Goals", route: "/goals", testID: "menu-goals" },

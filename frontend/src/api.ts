@@ -144,4 +144,32 @@ export const api = {
     jfetch<Reminder>(`/reminders/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   deleteReminder: (id: string) =>
     jfetch<{ ok: boolean }>(`/reminders/${id}`, { method: "DELETE" }),
+
+  // Briefing
+  briefing: (lat?: number | null, lon?: number | null, tzOffset?: number) => {
+    const qs = new URLSearchParams();
+    if (lat != null && lon != null) {
+      qs.set("lat", String(lat));
+      qs.set("lon", String(lon));
+    }
+    if (tzOffset != null) qs.set("tz_offset", String(tzOffset));
+    const s = qs.toString();
+    return jfetch<{
+      greeting: string;
+      name: string | null;
+      weather: {
+        temperature_c: number;
+        humidity: number;
+        wind_kph: number;
+        code: number;
+        summary: string;
+        timezone: string;
+      } | null;
+      pending_reminders: Reminder[];
+      active_goals: Goal[];
+      important_dates: Memory[];
+      session_count: number;
+      integrations: Record<string, { connected: boolean; note: string }>;
+    }>(`/briefing${s ? `?${s}` : ""}`);
+  },
 };

@@ -11,7 +11,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Talk to Nova using your voice"
+        "NSMicrophoneUsageDescription": "Talk to Nova using your voice",
+        "NSLocationWhenInUseUsageDescription": "Show weather for your area in the daily briefing"
       }
     },
     "android": {
@@ -20,7 +21,7 @@
         "backgroundColor": "#000"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["RECORD_AUDIO"]
+      "permissions": ["RECORD_AUDIO", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
     },
     "web": {
       "bundler": "metro",
@@ -43,6 +44,12 @@
         "expo-audio",
         {
           "microphonePermission": "Talk to Nova using your voice"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Show your daily briefing with weather for your area"
         }
       ]
     ],
