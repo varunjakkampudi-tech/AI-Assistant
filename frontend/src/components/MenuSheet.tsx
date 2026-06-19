@@ -16,6 +16,8 @@ interface Item {
 const ITEMS: Item[] = [
   { icon: "sunny-outline", label: "Daily briefing", route: "/briefing", testID: "menu-briefing" },
   { icon: "rocket-outline", label: "Chief of Staff", route: "/chief", testID: "menu-chief" },
+  { icon: "search-outline", label: "Search everything", route: "/search", testID: "menu-search" },
+  { icon: "pulse-outline", label: "Life OS", route: "/life", testID: "menu-life" },
   { icon: "chatbubbles-outline", label: "Conversations", route: "/history", testID: "menu-history" },
   { icon: "sparkles-outline", label: "Memories", route: "/memories", testID: "menu-memories" },
   { icon: "person-circle-outline", label: "Digital Twin", route: "/twin", testID: "menu-twin" },

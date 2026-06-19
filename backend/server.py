@@ -26,6 +26,8 @@ import call_manager as cm
 import finance_brain as fb
 import digital_twin as dt
 import chief_of_staff as cos
+import unified_search as us
+import life_os as lifeos
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -733,11 +735,16 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
 ACTION_INSTRUCTIONS = (
     "You are an intent extractor. Read the USER message and decide if it explicitly asks to do "
     "ONE of these now: create a Google Calendar event, send an email, create a reminder/task, "
-    "or send a WhatsApp message. Output ONLY one JSON object (no prose):\n"
+    "send a WhatsApp message, OR ask Nova to draft a reply to a named person in the user's own style. "
+    "Output ONLY one JSON object (no prose):\n"
     "  - For calendar:  {\"action\":\"create_event\", \"summary\":string, \"start_iso\":ISO8601, \"end_iso\":ISO8601, \"description\":string}\n"
     "  - For email:     {\"action\":\"send_email\", \"to\":string, \"subject\":string, \"body\":string}\n"
     "  - For reminder:  {\"action\":\"create_reminder\", \"text\":string, \"condition\":string}\n"
     "  - For whatsapp:  {\"action\":\"whatsapp_message\", \"phone\":string-or-empty, \"text\":string}  (phone is E.164 like +91...; leave empty if user did not specify)\n"
+    "  - For reply-in-style: {\"action\":\"draft_reply\", \"to_contact\":string, \"context\":string}\n"
+    "    Trigger when the user says things like 'Reply to Vijay', 'Draft a reply to mom', "
+    "    'Tell Anita that ...', 'Respond to Vijay about deployment'. 'context' is whatever you can "
+    "    glean about the situation/topic; leave empty string if no context is given.\n"
     "  - Otherwise:     {\"action\":\"none\"}\n"
     "Resolve relative times against the provided NOW. Default duration of a meeting is 30 minutes. "
     "Only return a non-none action when the user's request is unambiguous."
@@ -811,6 +818,48 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
             else:
                 link = f"https://wa.me/?text={quote(text)}"
             return "\n\n💬 I drafted a WhatsApp message for you — tap the button to open it and hit send.", link
+        if action == "draft_reply":
+            to_contact = (obj.get("to_contact") or "").strip()
+            ctx = (obj.get("context") or "").strip()
+            if not to_contact:
+                return None, None
+            try:
+                twin = get_digital_twin()
+                # Record the interaction so frequent_contacts stays current
+                try:
+                    await twin.learn_contact_interaction(to_contact, "unknown")
+                except Exception:
+                    pass
+                suggestion = await twin.generate_reply_suggestion(to_contact, ctx)
+                if not suggestion:
+                    style = ""
+                    try:
+                        style = await twin.get_style_prompt()
+                    except Exception:
+                        style = ""
+                    prompt = (
+                        f"Draft a reply from the user TO {to_contact}.\n"
+                        f"Situation/context: {ctx or '(no extra context — write a brief, friendly check-in)'}\n\n"
+                        f"User's communication style: {style}\n\n"
+                        "Return ONLY the reply text — no greeting like 'Here's a draft', no quotes, no preamble. "
+                        "Keep it natural and short (2-4 lines)."
+                    )
+                    suggestion = await _bedrock_converse(
+                        messages=[{"role": "user", "content": [{"text": prompt}]}],
+                        system_text="You write short replies that mimic the user's voice.",
+                        max_tokens=180,
+                        temperature=0.5,
+                    )
+                    suggestion = (suggestion or "").strip().strip('"').strip()
+                if suggestion:
+                    return (
+                        f"\n\n✍️ Drafted reply to **{to_contact}** in your style:\n\n> {suggestion}\n\n"
+                        "Send it as-is or tweak before sending.",
+                        None,
+                    )
+            except Exception as e:
+                logger.warning("draft_reply failed: %s", e)
+                return f"\n\n⚠️ Couldn't draft that reply: {str(e)[:100]}", None
     except Exception as e:
         logger.warning("Action extraction failed: %s", e)
     return None, None
@@ -1722,41 +1771,190 @@ async def get_smart_suggestions(context: str = ""):
     return await chief.get_smart_suggestions(context)
 
 
+# ==================== PERSONAL SEARCH ENGINE ====================
+
+_search_engine: Optional[us.PersonalSearchEngine] = None
+
+
+def get_search_engine() -> us.PersonalSearchEngine:
+    global _search_engine
+    if _search_engine is None:
+        _search_engine = us.PersonalSearchEngine(db, gh)
+    return _search_engine
+
+
+class UnifiedSearchRequest(BaseModel):
+    query: str
+    sources: Optional[List[str]] = None
+    top_k: int = 12
+    synthesize: bool = True
+
+
+@api_router.post("/search/unified")
+async def unified_search(body: UnifiedSearchRequest):
+    """Search across chats, memories, goals, reminders, knowledge, finance,
+    calendar, and email (last two require Google connected)."""
+    engine = get_search_engine()
+    return await engine.search(body.query, body.sources, body.top_k, body.synthesize)
+
+
+@api_router.get("/search/sources")
+async def search_sources_status():
+    """Return which sources are available right now (helps the UI render filters)."""
+    google_doc = await db.integrations.find_one({"id": "google"}, {"email": 1, "_id": 0})
+    google_on = bool(google_doc and google_doc.get("email"))
+    counts: Dict[str, int] = {}
+    for k, coll in [
+        ("chat", db.messages),
+        ("memory", db.memories),
+        ("goal", db.goals),
+        ("reminder", db.reminders),
+        ("knowledge", db.knowledge_documents),
+        ("finance", db.transactions),
+    ]:
+        try:
+            counts[k] = await coll.count_documents({})
+        except Exception:
+            counts[k] = 0
+    return {
+        "available": {
+            "chat": True, "memory": True, "goal": True, "reminder": True,
+            "knowledge": True, "finance": True,
+            "calendar": google_on, "email": google_on,
+        },
+        "counts": counts,
+        "google_connected": google_on,
+    }
+
+
+# ==================== LIFE OPERATING SYSTEM ====================
+
+_life_os: Optional[lifeos.LifeOperatingSystem] = None
+
+
+def get_life_os() -> lifeos.LifeOperatingSystem:
+    global _life_os
+    if _life_os is None:
+        _life_os = lifeos.LifeOperatingSystem(db, finance_brain=get_finance_brain(), digital_twin=get_digital_twin())
+    return _life_os
+
+
+@api_router.get("/life/scores")
+async def life_scores():
+    """Multi-dimension life scores (Health/Career/Finance/Learning/Relationships)."""
+    return await get_life_os().get_scores()
+
+
+@api_router.get("/life/recommendations")
+async def life_recommendations(max_items: int = 5):
+    """Daily actionable recommendations curated for the user."""
+    return await get_life_os().get_recommendations(max_items=max_items)
+
+
+@api_router.get("/life/dashboard")
+async def life_dashboard():
+    """One-shot endpoint returning scores + recommendations."""
+    return await get_life_os().get_dashboard()
+
+
 @api_router.get("/expo-go", response_class=HTMLResponse)
 async def expo_go_page():
-    """Landing page with a QR code that opens Nova in Expo Go (iOS + Android)."""
-    tunnel_url = os.environ.get("EXPO_TUNNEL_URL", "exp://4opqpwy-anonymous-3000.exp.direct")
+    """Landing page with a live QR code that opens Nova in Expo Go (iOS + Android).
+
+    The tunnel URL rotates whenever Metro restarts, so we fetch the current
+    launchAsset URL from the local Metro dev server and rebuild the QR every time.
+    """
     from urllib.parse import quote
-    qr_src = f"https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&data={quote(tunnel_url)}"
+    tunnel_host = None
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.get(
+                "http://localhost:3000/",
+                headers={
+                    "Expo-Platform": "ios",
+                    "Accept": "application/expo+json,application/json",
+                },
+            )
+            if r.status_code == 200:
+                manifest = r.json()
+                launch_url = manifest.get("launchAsset", {}).get("url", "")
+                # launch_url looks like http://<hash>-anonymous-3000.exp.direct/...
+                if "://" in launch_url:
+                    tunnel_host = launch_url.split("://", 1)[1].split("/", 1)[0]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"expo-go: couldn't read live tunnel from Metro: {e}")
+
+    if not tunnel_host:
+        tunnel_host = os.environ.get("EXPO_TUNNEL_URL", "exp://localhost:3000").replace("exp://", "").replace("http://", "")
+
+    exp_url = f"exp://{tunnel_host}"
+    qr_src = f"https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&data={quote(exp_url)}"
+    universal = f"https://exp.host/--/to-exp/{quote(exp_url)}"
+
     return HTMLResponse(f"""
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Nova in Expo Go</title>
 <style>
+  *{{box-sizing:border-box}}
   body{{margin:0;background:#0a0a0c;color:#F7F7F8;font-family:-apple-system,system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}}
-  .card{{max-width:520px;background:#16161a;border:1px solid #2a2a30;border-radius:20px;padding:32px;text-align:center;}}
-  h1{{margin:0 0 6px;font-weight:600;font-size:28px;color:#E1B168;}}
-  .sub{{color:#9b9ba1;font-size:14px;margin-bottom:24px;}}
+  .card{{max-width:560px;width:100%;background:#16161a;border:1px solid #2a2a30;border-radius:20px;padding:32px;}}
+  h1{{margin:0 0 6px;font-weight:600;font-size:28px;color:#E1B168;text-align:center;}}
+  .sub{{color:#9b9ba1;font-size:14px;margin-bottom:24px;text-align:center;}}
+  .qr-wrap{{text-align:center;margin-bottom:20px;}}
   .qr{{background:#fff;border-radius:16px;padding:18px;display:inline-block;}}
   .qr img{{display:block;width:280px;height:280px;}}
-  .url{{margin-top:20px;font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#0a0a0c;border:1px solid #2a2a30;border-radius:10px;padding:12px;word-break:break-all;color:#E1B168;}}
-  ol{{text-align:left;color:#cfcfd4;font-size:14px;line-height:1.6;padding-left:20px;margin:24px 0 0;}}
-  a.btn{{display:inline-block;margin-top:16px;background:#E1B168;color:#16161a;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:600;font-size:14px;}}
-  .stores{{margin-top:12px;font-size:12px;color:#9b9ba1;}}
-  .stores a{{color:#E1B168;text-decoration:none;}}
+  .url{{margin-top:16px;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#0a0a0c;border:1px solid #2a2a30;border-radius:10px;padding:10px;word-break:break-all;color:#E1B168;text-align:center;}}
+  .btns{{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;justify-content:center;}}
+  a.btn{{flex:1;min-width:160px;display:inline-block;background:#E1B168;color:#16161a;text-decoration:none;padding:12px 18px;border-radius:999px;font-weight:600;font-size:14px;text-align:center;}}
+  a.btn.alt{{background:#2a2a30;color:#F7F7F8;}}
+  .platforms{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:24px;}}
+  .plat{{background:#0a0a0c;border:1px solid #2a2a30;border-radius:12px;padding:16px;}}
+  .plat h3{{margin:0 0 10px;font-size:14px;color:#E1B168;font-weight:600;display:flex;align-items:center;gap:6px;}}
+  .plat ol{{margin:0;padding-left:20px;color:#cfcfd4;font-size:13px;line-height:1.6;}}
+  .stores{{margin-top:18px;font-size:12px;color:#9b9ba1;text-align:center;}}
+  .stores a{{color:#E1B168;text-decoration:none;margin:0 6px;}}
+  .note{{margin-top:18px;font-size:12px;color:#9b9ba1;background:#0a0a0c;border-left:3px solid #E1B168;border-radius:6px;padding:10px 14px;line-height:1.5;}}
+  @media (max-width:560px){{.platforms{{grid-template-columns:1fr}} .qr img{{width:240px;height:240px}}}}
 </style></head>
 <body><div class="card">
   <h1>Nova AI</h1>
   <div class="sub">Open in Expo Go — iOS & Android</div>
-  <div class="qr"><img src="{qr_src}" alt="Expo Go QR"></div>
-  <div class="url">{tunnel_url}</div>
-  <a class="btn" href="{tunnel_url}">Open in Expo Go</a>
-  <ol>
-    <li>Install <b>Expo Go</b> from the App Store / Play Store.</li>
-    <li>iOS: open the Camera app and point at the QR code.<br/>Android: open Expo Go → <i>Scan QR code</i>.</li>
-    <li>Nova will download and open inside Expo Go.</li>
-  </ol>
+
+  <div class="qr-wrap"><div class="qr"><img src="{qr_src}" alt="Expo Go QR"></div></div>
+
+  <div class="url">{exp_url}</div>
+
+  <div class="btns">
+    <a class="btn" href="{exp_url}">Open in Expo Go (phone)</a>
+    <a class="btn alt" href="{universal}">Or use universal link</a>
+  </div>
+
+  <div class="platforms">
+    <div class="plat">
+      <h3>📱 iPhone</h3>
+      <ol>
+        <li>Install <b>Expo Go</b> from the App Store.</li>
+        <li>Open the <b>Camera</b> app and point at the QR.</li>
+        <li>Tap the yellow banner that says "Open in Expo Go".</li>
+      </ol>
+    </div>
+    <div class="plat">
+      <h3>🤖 Android</h3>
+      <ol>
+        <li>Install <b>Expo Go</b> from Google Play.</li>
+        <li>Open <b>Expo Go</b> → tap <b>"Scan QR code"</b>.</li>
+        <li>Point at the QR — Nova will launch.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="note">
+    The tunnel URL changes each time Metro restarts. <b>Refresh this page</b> if Expo Go says
+    "Something went wrong" — that means you have an outdated link. The QR above is always live.
+  </div>
+
   <div class="stores">
-    <a href="https://apps.apple.com/app/expo-go/id982107779">iOS App Store</a> ·
-    <a href="https://play.google.com/store/apps/details?id=host.exp.exponent">Google Play</a>
+    <a href="https://apps.apple.com/app/expo-go/id982107779">iOS App Store ↗</a> ·
+    <a href="https://play.google.com/store/apps/details?id=host.exp.exponent">Google Play ↗</a>
   </div>
 </div></body></html>""")
 

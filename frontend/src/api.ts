@@ -339,4 +339,20 @@ export const api = {
     jfetch<any>(`/chief/morning-briefing?tz_offset=${tz_offset}`),
   chiefSuggestions: (context = "") =>
     jfetch<any[]>(`/chief/suggestions${context ? `?context=${encodeURIComponent(context)}` : ""}`),
+
+  // ==================== PERSONAL SEARCH ENGINE ====================
+
+  unifiedSearch: (query: string, sources?: string[], top_k = 12, synthesize = true) =>
+    jfetch<any>("/search/unified", {
+      method: "POST",
+      body: JSON.stringify({ query, sources, top_k, synthesize }),
+    }),
+  searchSourcesStatus: () => jfetch<any>("/search/sources"),
+
+  // ==================== LIFE OPERATING SYSTEM ====================
+
+  lifeScores: () => jfetch<any>("/life/scores"),
+  lifeRecommendations: (max_items = 5) =>
+    jfetch<any[]>(`/life/recommendations?max_items=${max_items}`),
+  lifeDashboard: () => jfetch<any>("/life/dashboard"),
 };
