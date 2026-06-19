@@ -129,7 +129,7 @@ export default function FinanceScreen() {
     if (!googleConnected) {
       Alert.alert(
         "Connect Google first",
-        "Open the Daily Briefing screen and tap 'Connect Google' so Nova can read your bank emails.",
+        "Open the Daily Briefing screen and tap 'Connect Google' so ORA can read your bank emails.",
       );
       return;
     }
@@ -219,7 +219,7 @@ export default function FinanceScreen() {
                         timeStyle: "short",
                       })} · ${syncStatus.last_new ?? 0} new`
                     : "Tap 'Sync now' to pull bank, UPI & card emails."
-                  : "Open Daily Briefing → Connect Google. Nova will then auto-detect every payment."}
+                  : "Open Daily Briefing → Connect Google. ORA will then auto-detect every payment."}
               </Text>
             </View>
             <Pressable
@@ -347,8 +347,8 @@ export default function FinanceScreen() {
             <Text style={styles.emptyTitle}>No spending data yet</Text>
             <Text style={styles.emptyText}>
               {googleConnected
-                ? "Tap 'Sync now' above and Nova will scan your Gmail for bank, UPI and credit-card emails."
-                : "Connect Google in the Daily Briefing screen and Nova will auto-detect every payment from your inbox."}
+                ? "Tap 'Sync now' above and ORA will scan your Gmail for bank, UPI and credit-card emails."
+                : "Connect Google in the Daily Briefing screen and ORA will auto-detect every payment from your inbox."}
             </Text>
           </View>
         )}
@@ -431,7 +431,7 @@ export default function FinanceScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Add bank / UPI notification</Text>
             <Text style={styles.modalHint}>
-              Paste a bank SMS or notification — Nova will detect amount, merchant and category.
+              Paste a bank SMS or notification — ORA will detect amount, merchant and category.
             </Text>
             <TextInput
               value={txTitle}

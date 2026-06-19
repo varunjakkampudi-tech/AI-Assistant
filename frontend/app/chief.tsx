@@ -177,7 +177,7 @@ export default function ChiefScreen() {
         {/* Companion nudges (habit-aware) */}
         {nudges.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Nova nudges</Text>
+            <Text style={styles.sectionLabel}>ORA nudges</Text>
             {nudges.map((n, idx) => (
               <View
                 key={idx}

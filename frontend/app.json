@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Nova AI",
-    "slug": "frontend",
+    "name": "ORA OS",
+    "slug": "ora-os",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -10,16 +10,16 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.nova.ai",
+      "bundleIdentifier": "com.oraos.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Talk to Nova using your voice",
+        "NSMicrophoneUsageDescription": "Talk to ORA using your voice",
         "NSLocationWhenInUseUsageDescription": "Show weather for your area in daily briefing",
         "NSContactsUsageDescription": "Look up contact names for incoming calls",
         "UIBackgroundModes": ["audio", "voip", "fetch", "remote-notification"]
       }
     },
     "android": {
-      "package": "com.nova.ai",
+      "package": "com.oraos.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000"
@@ -58,7 +58,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Talk to Nova using your voice"
+          "microphonePermission": "Talk to ORA using your voice"
         }
       ],
       [

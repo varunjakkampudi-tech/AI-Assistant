@@ -104,7 +104,7 @@ export default function GoalsScreen() {
         <View style={styles.center}>
           <Ionicons name="trophy-outline" size={36} color={theme.color.onSurfaceSecondary} />
           <Text style={styles.emptyTitle}>Set your first goal</Text>
-          <Text style={styles.emptySub}>Track learning, fitness, projects — Nova will help.</Text>
+          <Text style={styles.emptySub}>Track learning, fitness, projects — ORA will help.</Text>
           <Pressable style={styles.primaryBtn} onPress={() => setModalOpen(true)} testID="empty-add-goal">
             <Text style={styles.primaryBtnText}>Add a goal</Text>
           </Pressable>

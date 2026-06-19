@@ -180,7 +180,7 @@ export default function SearchScreen() {
             <Ionicons name="search-circle-outline" size={56} color={theme.color.brand} />
             <Text style={styles.emptyTitle}>Search across your life</Text>
             <Text style={styles.emptyText}>
-              Nova searches all your chats, memories, goals, reminders, knowledge documents, transactions, calendar
+              ORA searches all your chats, memories, goals, reminders, knowledge documents, transactions, calendar
               and email — and synthesizes an answer with sources.
             </Text>
             <Text style={styles.examplesLabel}>Try one of these:</Text>
@@ -222,7 +222,7 @@ export default function SearchScreen() {
               <View style={styles.answerCard} testID="search-answer">
                 <View style={styles.answerHeader}>
                   <Ionicons name="sparkles" size={16} color={theme.color.brand} />
-                  <Text style={styles.answerHeaderText}>Nova's answer</Text>
+                  <Text style={styles.answerHeaderText}>ORA's answer</Text>
                 </View>
                 <Text style={styles.answerText}>{result.answer}</Text>
               </View>

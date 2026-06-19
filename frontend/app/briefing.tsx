@@ -290,7 +290,7 @@ export default function BriefingScreen() {
               </View>
               {data.important_dates.length === 0 ? (
                 <Text style={styles.cardEmpty}>
-                  Mention a date in chat (e.g. "team review on Aug 14") — Nova will surface it here.
+                  Mention a date in chat (e.g. "team review on Aug 14") — ORA will surface it here.
                 </Text>
               ) : (
                 data.important_dates.slice(0, 5).map((m) => (

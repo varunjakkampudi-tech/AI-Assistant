@@ -36,7 +36,7 @@ export default function SignInScreen() {
       />
       <View style={styles.center}>
         <VoiceOrb active size={140} />
-        <Text style={styles.title}>Welcome to Nova</Text>
+        <Text style={styles.title}>Welcome to ORA</Text>
         <Text style={styles.sub}>Sign in with Google to unlock your assistant with personal memory, calendar, and inbox awareness.</Text>
 
         <Pressable
@@ -64,7 +64,7 @@ export default function SignInScreen() {
         </Pressable>
 
         <Text style={styles.fineprint}>
-          Nova uses your Google sign-in for identity and (with your consent) to read upcoming Calendar events and recent Gmail. Tokens never leave the server.
+          ORA uses your Google sign-in for identity and (with your consent) to read upcoming Calendar events and recent Gmail. Tokens never leave the server.
         </Text>
       </View>
     </View>

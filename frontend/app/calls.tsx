@@ -200,7 +200,7 @@ export default function CallsScreen() {
           <Ionicons name="call-outline" size={48} color={theme.color.onSurfaceSecondary} />
           <Text style={styles.emptyTitle}>No AI Calls Yet</Text>
           <Text style={styles.emptySubtitle}>
-            Have Nova make calls on your behalf — schedule appointments, follow up on tasks, and more.
+            Have ORA make calls on your behalf — schedule appointments, follow up on tasks, and more.
           </Text>
           <Pressable style={styles.primaryBtn} onPress={() => setModalOpen(true)}>
             <Text style={styles.primaryBtnText}>Make a Call</Text>
@@ -255,7 +255,7 @@ export default function CallsScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>New AI Call</Text>
             <Text style={styles.modalSubtitle}>
-              Nova will call this number and handle the conversation based on your purpose.
+              ORA will call this number and handle the conversation based on your purpose.
             </Text>
 
             <TextInput
@@ -364,7 +364,7 @@ export default function CallsScreen() {
                       ]}
                     >
                       <Text style={styles.transcriptRole}>
-                        {msg.role === "ai" ? "Nova" : "Recipient"}
+                        {msg.role === "ai" ? "ORA" : "Recipient"}
                       </Text>
                       <Text style={styles.transcriptText}>{msg.text}</Text>
                     </View>

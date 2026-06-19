@@ -110,7 +110,7 @@ export default function MemoriesScreen() {
           <Ionicons name="sparkles-outline" size={36} color={theme.color.onSurfaceSecondary} />
           <Text style={styles.emptyTitle}>No memories yet</Text>
           <Text style={styles.emptySub}>
-            Chat with Nova — facts about you (people, projects, goals, dates) get saved here automatically.
+            Chat with ORA — facts about you (people, projects, goals, dates) get saved here automatically.
           </Text>
         </View>
       ) : (

@@ -109,7 +109,7 @@ export default function TwinScreen() {
       const r = await api.twinSuggestReply(contactName.trim(), contextText.trim());
       setSuggestion(
         r.suggestion ??
-          `No saved template — Nova will use your style:\n\n"${stylePrompt || "Style data still being learned…"}"`
+          `No saved template — ORA will use your style:\n\n"${stylePrompt || "Style data still being learned…"}"`
       );
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed");
@@ -169,7 +169,7 @@ export default function TwinScreen() {
             {dataPoints} learning points
           </Text>
           <Text style={styles.statusSub}>
-            Nova learns from every chat. The more you talk, the better it mirrors how you write, decide and prioritize.
+            ORA learns from every chat. The more you talk, the better it mirrors how you write, decide and prioritize.
           </Text>
         </View>
 
@@ -295,7 +295,7 @@ export default function TwinScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Suggest reply</Text>
           <Text style={styles.helperText}>
-            Tell Nova who you're replying to and what the message says — it'll draft a reply in your style.
+            Tell ORA who you're replying to and what the message says — it'll draft a reply in your style.
           </Text>
           <TextInput
             value={contactName}

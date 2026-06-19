@@ -1,0 +1,36 @@
+{
+  "summary": "ORA OS backend post-rebrand verification — all 19 review-request bullets verified GREEN against the public preview URL via pytest. Created /app/backend/tests/test_ora_os_api.py with 21 tests covering root branding, briefing aggregator, sessions, Bedrock-backed chat (incl. critical ORA-identity check), memories, goals, reminders, ElevenLabs voice status, Google OAuth status+auth-url, finance NL extractor + spending summary, health metrics catalog + log + summary, career profile, and timeline. 21/21 PASSED in 5.95s.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ora_os_api.py",
+    "/app/test_reports/pytest/pytest_ora_os.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Branding: server.py:67 BASE_SYSTEM_PROMPT correctly opens with 'You are ORA — a warm…' and the root endpoint returns {'message':'ORA OS API','model':'amazon.nova-lite-v1:0'}. Note: 'nova-lite' is the AWS Bedrock model id and is NOT the assistant brand — this is intentional and correct.",
+    "Bedrock identity test: in a fresh session the assistant self-identifies as 'Ora' (lowercase 'nova' substring absent in the reply). Rebrand is live at the LLM surface.",
+    "server.py is 2509 lines — large monolith. Endpoints span chat, sessions, briefing, transcribe, memories, goals, reminders, google oauth, gmail, calendar, notifications, calls, dashboard, voice, finance, twin, chief, search, life, timeline, journal, graph, health, family. Recommend splitting into routers/<domain>.py to keep <700 lines per file per code-review guideline.",
+    "DB_NAME is correctly set to 'ora_os' in /app/backend/.env. All collections live under that DB now.",
+    "No '_id' leakage observed in any endpoint sampled (root, sessions, memories, briefing, voice, google, finance, health, career, timeline). All Mongo queries correctly project {'_id': 0}.",
+    "ElevenLabs key + voice id are LIVE in env; /api/voice/status returns enabled:true. Per the request I did NOT exercise /api/voice/tts (cost-bearing) — only the status surface.",
+    "/api/finance/process-notification successfully extracts a transaction object from 'Rs.500 debited at SWIGGY' style notification — finance brain LLM pipeline is wired correctly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_ora_os_api.py (new file — 21 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "not tested (skip per request)"},
+  "test_credentials": "No auth required — backend exposed at https://221e78fe-2385-4da2-90f3-63d5ce6338fc.preview.emergentagent.com without bearer tokens.",
+  "seed_data_creation": "All test data prefixed with TEST_ and cleaned up via teardown_class hooks: TEST_OraSession, TEST_OraChat, TEST_FavouriteColor (memory), TEST_OraGoal, TEST_ora reminder, water_glasses health log. No production data touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "ORA OS rebrand fully verified at backend surface. Test file /app/backend/tests/test_ora_os_api.py + previous /app/backend/tests/test_nova_*.py files cover the API. Note: prior Nova-era test file test_nova_api.py asserts message contains 'Nova' (line 45) — that test is now STALE and will fail; recommend either updating it to 'ORA' or removing it. The new test_ora_os_api.py is the authoritative regression suite going forward. ChatRequest schema uses field name 'message' (not 'content'). EXPO_PUBLIC_BACKEND_URL is the public preview URL in /app/frontend/.env (conftest.py loads it).",
+  "rca_of_issue": "No bugs found. Branding swap from Nova to ORA is reflected in (a) root API message, (b) BASE_SYSTEM_PROMPT at server.py:67, (c) live Bedrock-generated assistant reply identifies as ORA, (d) DB_NAME=ora_os. ElevenLabs and Google OAuth integrations both report correctly. Finance NL extractor returns a structured transaction. Every endpoint in the 19-bullet spec returned the expected shape."
+}

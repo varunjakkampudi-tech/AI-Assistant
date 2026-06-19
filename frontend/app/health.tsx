@@ -198,7 +198,7 @@ export default function HealthScreen() {
               <View style={styles.empty}>
                 <Ionicons name="fitness-outline" size={36} color={theme.color.onSurfaceSecondary} />
                 <Text style={styles.emptyTitle}>No health data yet</Text>
-                <Text style={styles.emptyText}>Log a metric above — Nova starts spotting trends from day 1.</Text>
+                <Text style={styles.emptyText}>Log a metric above — ORA starts spotting trends from day 1.</Text>
               </View>
             )}
           </>

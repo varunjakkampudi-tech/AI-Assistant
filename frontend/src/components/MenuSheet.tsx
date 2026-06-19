@@ -58,7 +58,7 @@ export default function MenuSheet({ visible, onClose, onNewChat }: Props) {
           onPress={(e) => e.stopPropagation()}
         >
           <View style={styles.handle} />
-          <Text style={styles.title}>Nova</Text>
+          <Text style={styles.title}>ORA OS</Text>
           <ScrollView>
             {onNewChat && (
               <Pressable

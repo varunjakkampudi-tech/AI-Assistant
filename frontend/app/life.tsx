@@ -258,7 +258,7 @@ export default function LifeOSScreen() {
 
         <Text style={styles.footnote}>
           Scores update based on your goals, reminders, knowledge vault, finance data and contacts. Add more
-          tracked items to make Nova's picture of your life sharper.
+          tracked items to make ORA's picture of your life sharper.
         </Text>
       </ScrollView>
     </View>

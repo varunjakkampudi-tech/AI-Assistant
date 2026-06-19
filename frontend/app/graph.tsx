@@ -181,7 +181,7 @@ export default function GraphScreen() {
             <Ionicons name="git-network-outline" size={36} color={theme.color.onSurfaceSecondary} />
             <Text style={styles.emptyTitle}>No graph yet</Text>
             <Text style={styles.emptyText}>
-              Chat with Nova about people, projects, and goals. Memories form the graph automatically.
+              Chat with ORA about people, projects, and goals. Memories form the graph automatically.
             </Text>
           </View>
         )}

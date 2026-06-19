@@ -423,7 +423,7 @@ function IngestModal({ visible, onClose, onCreated }: { visible: boolean; onClos
           {mode === "url" ? (
             <>
               <Field label="Job posting URL" value={url} onChangeText={setUrl} placeholder="LinkedIn / Naukri / company page" autoCapitalize="none" testID="ingest-url" />
-              <Text style={styles.help}>Nova fetches and parses the JD, then scores it against your resume.</Text>
+              <Text style={styles.help}>ORA fetches and parses the JD, then scores it against your resume.</Text>
             </>
           ) : (
             <>
@@ -525,7 +525,7 @@ function JobDetailModal({ job, onClose, onChanged }: { job: Job; onClose: () => 
             <View style={{ flex: 1 }}>
               {!!job.match_breakdown?.recommendation && (
                 <Text style={styles.recText}>
-                  Nova says: <Text style={{ color: theme.color.brand, fontWeight: "700" }}>{job.match_breakdown.recommendation.toUpperCase()}</Text>
+                  ORA says: <Text style={{ color: theme.color.brand, fontWeight: "700" }}>{job.match_breakdown.recommendation.toUpperCase()}</Text>
                 </Text>
               )}
               {!!job.match_breakdown?.rationale && (

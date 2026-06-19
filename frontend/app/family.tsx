@@ -49,7 +49,7 @@ export default function FamilyScreen() {
               <Ionicons name="heart" size={20} color={theme.color.brand} />
               <Text style={styles.heroTitle}>People who matter</Text>
               <Text style={styles.heroSub}>
-                Auto-detected from your chats with Nova ("my mom", "my brother", "wife"…). Tell Nova about important dates and they appear below.
+                Auto-detected from your chats with ORA ("my mom", "my brother", "wife"…). Tell ORA about important dates and they appear below.
               </Text>
             </View>
 
@@ -57,7 +57,7 @@ export default function FamilyScreen() {
               <Text style={styles.sectionTitle}>Family members ({data.family_members.length})</Text>
               {data.family_members.length === 0 ? (
                 <Text style={styles.empty}>
-                  Tell Nova "My mom's name is Asha" or "My wife is Priya" in chat — they'll appear here.
+                  Tell ORA "My mom's name is Asha" or "My wife is Priya" in chat — they'll appear here.
                 </Text>
               ) : (
                 data.family_members.map((p) => (
@@ -78,7 +78,7 @@ export default function FamilyScreen() {
               <Text style={styles.sectionTitle}>Important dates ({data.important_dates.length})</Text>
               {data.important_dates.length === 0 ? (
                 <Text style={styles.empty}>
-                  Add dates by chatting: "Mom's birthday is March 12" or "Anniversary on June 6". Nova auto-extracts and saves.
+                  Add dates by chatting: "Mom's birthday is March 12" or "Anniversary on June 6". ORA auto-extracts and saves.
                 </Text>
               ) : (
                 data.important_dates.map((d, i) => (

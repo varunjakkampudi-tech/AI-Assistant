@@ -282,7 +282,7 @@ export default function KnowledgeScreen() {
           <Ionicons name="folder-open-outline" size={48} color={theme.color.onSurfaceSecondary} />
           <Text style={styles.emptyTitle}>Your Knowledge Vault is Empty</Text>
           <Text style={styles.emptySubtitle}>
-            Upload PDFs, text files, or documents. Nova will search them to answer your questions.
+            Upload PDFs, text files, or documents. ORA will search them to answer your questions.
           </Text>
           <Pressable style={styles.primaryBtn} onPress={pickAndUpload} disabled={uploading}>
             {uploading ? (

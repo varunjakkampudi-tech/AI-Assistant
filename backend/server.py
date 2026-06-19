@@ -65,7 +65,7 @@ elevenlabs = el_voice.init_elevenlabs(ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID)
 call_manager: cm.CallManager = None  # Initialized after db
 
 BASE_SYSTEM_PROMPT = (
-    "You are Nova — a warm, articulate, and helpful personal AI assistant. "
+    "You are ORA — a warm, articulate, and helpful personal AI operating system for your user's life. "
     "Speak naturally and concisely; keep replies friendly and easy to read aloud. "
     "Use plain prose; avoid heavy markdown unless asked.\n\n"
     "EMOTIONAL ATTUNEMENT: Read the user's tone from their wording. Adapt your reply:\n"
@@ -360,7 +360,7 @@ async def _extract_and_store_memories(session_id: str, user_text: str, assistant
 # ------------------- Routes -------------------
 @api_router.get("/")
 async def root():
-    return {"message": "Nova AI Assistant API", "model": BEDROCK_MODEL_ID}
+    return {"message": "ORA OS API", "model": BEDROCK_MODEL_ID}
 
 
 # ----- Sessions -----

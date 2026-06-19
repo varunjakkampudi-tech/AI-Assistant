@@ -39,7 +39,7 @@ import VoiceOrb from "@/src/components/VoiceOrb";
 import TypingDots from "@/src/components/TypingDots";
 import MenuSheet from "@/src/components/MenuSheet";
 
-const SESSION_KEY = "nova_current_session";
+const SESSION_KEY = "ora_current_session";
 
 const SUGGESTIONS = [
   { icon: "bulb-outline", label: "Explain a tricky concept", prompt: "Explain quantum entanglement like I'm 12." },
@@ -261,10 +261,10 @@ export default function ChatScreen() {
   const shareConversation = useCallback(async () => {
     if (messages.length === 0) return;
     const text = messages
-      .map((m) => `${m.role === "user" ? "You" : "Nova"}: ${m.content}`)
+      .map((m) => `${m.role === "user" ? "You" : "ORA"}: ${m.content}`)
       .join("\n\n");
     try {
-      await Share.share({ message: `My conversation with Nova\n\n${text}\n\n— Sent from Nova AI` });
+      await Share.share({ message: `My conversation with ORA\n\n${text}\n\n— Sent from ORA OS` });
     } catch (e: any) {
       setError(`Share failed: ${e?.message || e}`);
     }
@@ -352,8 +352,8 @@ export default function ChatScreen() {
             <Ionicons name="menu" size={22} color={theme.color.onSurface} />
           </Pressable>
           <View style={styles.headerTitleWrap}>
-            <Text style={styles.headerTitle}>Nova</Text>
-            <Text style={styles.headerSubtitle}>Amazon Nova Lite</Text>
+            <Text style={styles.headerTitle}>ORA</Text>
+            <Text style={styles.headerSubtitle}>How can I help you today?</Text>
           </View>
           <Pressable
             style={styles.headerBtn}
@@ -398,7 +398,7 @@ export default function ChatScreen() {
         {!isRecording && empty ? (
           <View style={styles.emptyWrap} testID="empty-state">
             <VoiceOrb active size={160} />
-            <Text style={styles.emptyTitle}>How may I help today?</Text>
+            <Text style={styles.emptyTitle}>Hello{"\n"}How can I help you today?</Text>
             <Text style={styles.emptySubtitle}>
               Ask anything — type, hold the mic, or attach an image.
             </Text>
@@ -461,7 +461,7 @@ export default function ChatScreen() {
             testID="speaking-interrupt-pill"
           >
             <Ionicons name="stop-circle" size={16} color={theme.color.onBrand} />
-            <Text style={styles.speakingText}>Nova is speaking — tap to interrupt</Text>
+            <Text style={styles.speakingText}>ORA is speaking — tap to interrupt</Text>
           </Pressable>
         )}
       </SafeAreaView>
@@ -470,7 +470,7 @@ export default function ChatScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={0}
       >
-        <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View style={[styles.inputWrap, { paddingBottom: theme.spacing.sm }]}>
           {pendingImage && (
             <View style={styles.imagePreviewRow} testID="pending-image-preview">
               <RNImage source={{ uri: pendingImage.uri }} style={styles.imagePreview} />
@@ -497,7 +497,7 @@ export default function ChatScreen() {
               </Pressable>
               <TextInput
                 style={styles.input}
-                placeholder={transcribing ? "Transcribing…" : "Message Nova…"}
+            placeholder={transcribing ? "Transcribing…" : "Ask anything…"}
                 placeholderTextColor={theme.color.onSurfaceSecondary}
                 value={input}
                 onChangeText={setInput}
@@ -596,7 +596,7 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: theme.spacing.lg,
     paddingTop: theme.spacing.sm,
-    paddingBottom: 180,
+    paddingBottom: 260,
     gap: theme.spacing.lg,
   },
   userRow: { alignItems: "flex-end" },
@@ -692,7 +692,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: 78,
     paddingHorizontal: theme.spacing.lg,
     gap: theme.spacing.sm,
   },
