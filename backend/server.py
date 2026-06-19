@@ -2432,7 +2432,7 @@ async def career_job_apply(job_id: str):
     + cover letter, and (if the original posting has a URL) returns it so the
     client can open it in a browser. The actual ATS submission is a stub for
     LinkedIn-class portals — we provide everything the user needs to submit."""
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    job = await db.career_jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     twin = get_digital_twin()
