@@ -50,3 +50,12 @@ Bonus: Knowledge Vault (RAG), Finance Brain, Digital Twin, Chief of Staff, mock 
 - Real telephony (Twilio) for phone-calls module
 - Persist `image_mime` on ChatMessage so history replay doesn't hardcode image/jpeg
 - Allow `/api/calls/{id}/cancel` to accept `in_progress` calls
+
+### 2026-06-19 — Expo Go mobile preview
+- Installed `@expo/ngrok` (dev) so Metro can be tunneled publicly
+- Changed `frontend/package.json` "start" → `expo start --tunnel --port 3000`
+- Tunnel URL: exp://4opqpwy-anonymous-3000.exp.direct (renews if Metro restarts)
+- iOS + Android bundles verified — both compile via Metro (~10 MB each) with Hermes
+- Added GET /api/expo-go endpoint that serves a QR-code landing page → user opens it on desktop, scans with phone (Expo Go app for iOS/Android)
+- All Expo SDK modules used (expo-audio, notifications, contacts, image-picker, location, secure-store, speech, etc.) are supported by Expo Go SDK 54
+- Set EXPO_TUNNEL_URL in backend/.env so the QR page can be updated if the tunnel changes

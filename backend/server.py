@@ -1722,6 +1722,45 @@ async def get_smart_suggestions(context: str = ""):
     return await chief.get_smart_suggestions(context)
 
 
+@api_router.get("/expo-go", response_class=HTMLResponse)
+async def expo_go_page():
+    """Landing page with a QR code that opens Nova in Expo Go (iOS + Android)."""
+    tunnel_url = os.environ.get("EXPO_TUNNEL_URL", "exp://4opqpwy-anonymous-3000.exp.direct")
+    from urllib.parse import quote
+    qr_src = f"https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=10&data={quote(tunnel_url)}"
+    return HTMLResponse(f"""
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Nova in Expo Go</title>
+<style>
+  body{{margin:0;background:#0a0a0c;color:#F7F7F8;font-family:-apple-system,system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}}
+  .card{{max-width:520px;background:#16161a;border:1px solid #2a2a30;border-radius:20px;padding:32px;text-align:center;}}
+  h1{{margin:0 0 6px;font-weight:600;font-size:28px;color:#E1B168;}}
+  .sub{{color:#9b9ba1;font-size:14px;margin-bottom:24px;}}
+  .qr{{background:#fff;border-radius:16px;padding:18px;display:inline-block;}}
+  .qr img{{display:block;width:280px;height:280px;}}
+  .url{{margin-top:20px;font-family:ui-monospace,Menlo,monospace;font-size:13px;background:#0a0a0c;border:1px solid #2a2a30;border-radius:10px;padding:12px;word-break:break-all;color:#E1B168;}}
+  ol{{text-align:left;color:#cfcfd4;font-size:14px;line-height:1.6;padding-left:20px;margin:24px 0 0;}}
+  a.btn{{display:inline-block;margin-top:16px;background:#E1B168;color:#16161a;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:600;font-size:14px;}}
+  .stores{{margin-top:12px;font-size:12px;color:#9b9ba1;}}
+  .stores a{{color:#E1B168;text-decoration:none;}}
+</style></head>
+<body><div class="card">
+  <h1>Nova AI</h1>
+  <div class="sub">Open in Expo Go — iOS & Android</div>
+  <div class="qr"><img src="{qr_src}" alt="Expo Go QR"></div>
+  <div class="url">{tunnel_url}</div>
+  <a class="btn" href="{tunnel_url}">Open in Expo Go</a>
+  <ol>
+    <li>Install <b>Expo Go</b> from the App Store / Play Store.</li>
+    <li>iOS: open the Camera app and point at the QR code.<br/>Android: open Expo Go → <i>Scan QR code</i>.</li>
+    <li>Nova will download and open inside Expo Go.</li>
+  </ol>
+  <div class="stores">
+    <a href="https://apps.apple.com/app/expo-go/id982107779">iOS App Store</a> ·
+    <a href="https://play.google.com/store/apps/details?id=host.exp.exponent">Google Play</a>
+  </div>
+</div></body></html>""")
+
+
 app.include_router(api_router)
 
 app.add_middleware(
