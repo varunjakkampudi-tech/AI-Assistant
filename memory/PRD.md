@@ -59,3 +59,29 @@ Bonus: Knowledge Vault (RAG), Finance Brain, Digital Twin, Chief of Staff, mock 
 - Added GET /api/expo-go endpoint that serves a QR-code landing page → user opens it on desktop, scans with phone (Expo Go app for iOS/Android)
 - All Expo SDK modules used (expo-audio, notifications, contacts, image-picker, location, secure-store, speech, etc.) are supported by Expo Go SDK 54
 - Set EXPO_TUNNEL_URL in backend/.env so the QR page can be updated if the tunnel changes
+
+### 2026-06-19 — Phase 3: Search Engine + Life OS + Advanced Twin
+**New backend modules**
+- `unified_search.py` — PersonalSearchEngine scanning chats / memories / goals / reminders / knowledge_chunks / transactions / notifications / (Google calendar + Gmail when connected). Ranking = token overlap × recency bonus (recency only kicks in when hits>0). Synthesizes a 2-4 sentence answer with [N] citations using Bedrock Nova Lite.
+- `life_os.py` — LifeOperatingSystem computes 5 scores (Health / Career / Finance / Learning / Relationships) from existing data + emits AI-personalized daily recommendations (Bedrock).
+- Extended `server.py` ACTION_INSTRUCTIONS to detect `draft_reply` intent. When user says "Reply to Vijay…" Nova:
+  1. Records the contact interaction (digital twin)
+  2. Looks up a saved template
+  3. Falls back to Bedrock + twin style_prompt for a reply written in user's voice
+  4. Returns marker "✍️ Drafted reply to **<contact>**" then the draft
+
+**New endpoints**
+- POST /api/search/unified, GET /api/search/sources
+- GET /api/life/scores, /api/life/recommendations, /api/life/dashboard
+
+**New frontend screens**
+- `app/search.tsx` — search bar + 8 source-filter pills + Nova's answer card + cited source cards
+- `app/life.tsx` — overall score, weakest/strongest, AI rec cards (priority-tagged), 5 dimension bars with signals
+- MenuSheet.tsx: added "Search everything" (/search) and "Life OS" (/life)
+- src/api.ts: unifiedSearch, searchSourcesStatus, lifeScores, lifeRecommendations, lifeDashboard
+
+**Tests** — `/app/backend/tests/test_nova_phase3.py` (11 cases, 100% pass)
+
+**Polish applied post-test**
+- Recency bonus in unified search now requires hits>0 (no-match queries return empty list)
+- Life OS health score: adding a goal never DROPS the score (max(baseline, …))

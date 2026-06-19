@@ -79,7 +79,8 @@ class LifeOperatingSystem:
                 health_goals.append(g)
         if health_goals:
             avg_progress = sum(g.get("progress", 0) for g in health_goals) / len(health_goals)
-            score = 40 + avg_progress * 0.6  # 40-100
+            # 50 baseline → goes UP with progress, never DROPS below baseline for tracking the goal
+            score = max(50.0, 50 + avg_progress * 0.5)
             signals.append(f"{len(health_goals)} active health goal(s), avg progress {int(avg_progress)}%")
         else:
             signals.append("No health goals tracked — add one to start scoring")

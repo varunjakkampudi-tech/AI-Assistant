@@ -31,13 +31,18 @@ def _tokenize(s: str) -> List[str]:
 
 
 def _score(query_tokens: List[str], text: str, recency_iso: Optional[str] = None) -> float:
-    """Very lightweight ranking: token overlap + log recency bonus."""
+    """Very lightweight ranking: token overlap + log recency bonus.
+
+    Recency bonus only applies when at least one token matches, so unrelated recent
+    items never leak into the result set.
+    """
     if not text:
         return 0.0
     text_l = text.lower()
     hits = sum(1 for t in query_tokens if t in text_l)
+    if hits == 0:
+        return 0.0
     score = float(hits)
-    # Recency bonus (last 90 days adds up to 1.0)
     if recency_iso:
         try:
             t = datetime.fromisoformat(recency_iso.replace("Z", "+00:00"))
