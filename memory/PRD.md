@@ -9,6 +9,14 @@
 - **Backend:** FastAPI on `:8001`, MongoDB (`ora_os` db). All `/api/*` routes are **gated** behind a Bearer access-token except a small public whitelist. JWT (`HS256`, 12h access + 30d refresh w/ `jti`-bound refresh tokens).
 - **Integrations:** Amazon Bedrock (`amazon.nova-lite-v1:0`), ElevenLabs cloned voice (`Lr9nbI5Ax5lDTEobjoXE`), OpenAI Whisper STT (via Emergent LLM key), Google OAuth (Gmail + Calendar), **Resend** for transactional email (free tier 3k / month) with a dev fallback when `RESEND_API_KEY` is blank.
 
+## v1.2 (this iteration — Jun 19 2026)
+
+- Restored `backend/.env` and `frontend/.env` (preview pod swap erased them). All keys re-populated, redirect URI re-pointed to the active preview host.
+- **Expo Go QR is now live**: `/api/expo-qr` resolves the rotating Metro tunnel host via Metro's `/` manifest + ngrok local API and regenerates `/api/expo-qr/png` against the active `exp://` URL on every request. Frontend's static fallback (`/app/frontend/expo-go-qr.png`) regenerated too.
+- **Real light theme**: new `useColors()` hook in `src/auth.tsx` returns the active palette (`darkColors` / `lightColors` from `src/theme.ts`). Converted Sign-in, Home tab, You tab, Settings, Security Center, Help, Tabs layout, ScreenHeader, and root `_layout.tsx` to react to it. Status bar style follows theme. Default preference now `dark` to match the brand identity.
+- **Home top bar polish**: added centred `ORA OS` wordmark (`data-testid=home-brand`) and replaced the generic person icon in the avatar pill with the signed-in user's uppercase initial (`data-testid=home-avatar-initial`).
+- 31/31 backend tests still pass. Testing agent confirmed 100% on the OTP sign-in → Home → Settings (theme toggle) → Security Center → You tab flows.
+
 ## v1.0 (shipped earlier this session)
 
 - Rebrand Nova → ORA OS across frontend, backend, system prompt, app.json.

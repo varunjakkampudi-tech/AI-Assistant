@@ -271,7 +271,7 @@ async def settings_get(request: Request, user: Dict[str, Any] = Depends(require_
     if not doc:
         doc = {
             "user_id": user["id"],
-            "theme": "system",
+            "theme": "dark",
             "ai_data_usage": False,
             "cookies_essential": True,
             "cookies_analytics": False,
