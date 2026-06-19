@@ -115,7 +115,12 @@ class SupportContact(BaseModel):
 async def auth_otp_request(body: OTPRequest, request: Request):
     db = get_db(request)
     ip = _client_ip(request)
-    code = await sec.store_otp(db, body.email, ip)
+    try:
+        code = await sec.store_otp(db, body.email, ip)
+    except PermissionError as e:
+        msg = str(e)
+        await sec.log_event(db, user_id=None, event="otp.rate_limited", ip=ip, user_agent=request.headers.get("user-agent"), ok=False, meta={"email": body.email, "reason": msg})
+        raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
     ok = await email_svc.send_otp_email(body.email, code)
     dev_return = os.environ.get("DEV_OTP_RETURN_CODE", "false").lower() == "true"
     await sec.log_event(
@@ -125,7 +130,6 @@ async def auth_otp_request(body: OTPRequest, request: Request):
     )
     resp = {"sent": True, "delivered_via_email": ok}
     if dev_return:
-        # During dev / when Resend is not configured: surface the code so the flow is testable.
         resp["dev_code"] = code
         resp["delivered_via_email"] = ok
     return resp

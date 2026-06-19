@@ -1,80 +1,101 @@
 # ORA OS — Product Requirements Document
 
-> **Working name:** ORA OS · Final name to be confirmed within 2 days.
-> Previously known internally as **Nova**. Renamed everywhere to `ORA` / `ORA OS`.
+> **Working name:** ORA OS · Final name confirmation pending.
+> Built on top of the existing `AI-Assistant` repo (rebranded from Nova).
 
-## Original problem statement
+## Architecture (current)
 
-Build a mobile app from the existing GitHub repo `varunjakkampudi-tech/AI-Assistant` (main branch). Run on Expo Go. UI should match the supplied 9-screen design (and be even better, end-user friendly). First version going to App Store / Play Store. Make it production-ready and SEO/ASO optimized.
+- **Frontend:** Expo Router 6 (React Native + Web). Bottom-tab nav (Home · Timeline · Ask · Vault · You) with a custom blur tab bar and glowing centre Ask FAB. Display: Fraunces. Tokens persisted in **expo-secure-store**. Theme: light / dark / system.
+- **Backend:** FastAPI on `:8001`, MongoDB (`ora_os` db). All `/api/*` routes are **gated** behind a Bearer access-token except a small public whitelist. JWT (`HS256`, 12h access + 30d refresh w/ `jti`-bound refresh tokens).
+- **Integrations:** Amazon Bedrock (`amazon.nova-lite-v1:0`), ElevenLabs cloned voice (`Lr9nbI5Ax5lDTEobjoXE`), OpenAI Whisper STT (via Emergent LLM key), Google OAuth (Gmail + Calendar), **Resend** for transactional email (free tier 3k / month) with a dev fallback when `RESEND_API_KEY` is blank.
 
-## Architecture
+## v1.0 (shipped earlier this session)
 
-- **Frontend:** Expo Router 6 (React Native 0.81 + Web), TypeScript, dark theme with antique-gold accents.
-  - Bottom-tab navigation: **Home · Timeline · Ask · Vault · You** (custom blur tab bar with glowing center Ask button).
-  - Display font: Fraunces. Text font: system (clean, neutral).
-- **Backend:** FastAPI on `:8001`, MongoDB (`ora_os` db), prefixes all routes with `/api`.
-  - LLM: Amazon Bedrock — `amazon.nova-lite-v1:0`.
-  - Voice TTS: ElevenLabs cloned voice (id `Lr9nbI5Ax5lDTEobjoXE`).
-  - STT: OpenAI `whisper-1` via Emergent LLM key.
-  - OAuth: Google (Gmail + Calendar, optional).
-- **Supervisor-managed:** backend, frontend, mongodb. Expo Go via `yarn start --tunnel` (already wired).
+- Rebrand Nova → ORA OS across frontend, backend, system prompt, app.json.
+- Bottom-tab navigation with custom blur tab bar + glowing center Ask FAB.
+- Home, Ask, Timeline, Vault (Memory), You tabs all built to match the supplied 9-screen design.
+- ASO/SEO metadata, `+html.tsx` Open Graph + Twitter card.
+- 21/21 backend tests pass.
 
-## User personas
+## v1.1 (shipped now — Auth, Security, Privacy, Theme, Help, Expo QR)
 
-1. **Varun-the-operator** — wants a single screen each morning summarizing the day. Voice-first.
-2. **Career switcher** — pastes JD links, gets resume + cover letter + interview kit.
-3. **Quantified-self** — logs sleep / steps / weight, wants streaks and trends.
-4. **Memory-light** — chats with the assistant, expects it to remember names and projects.
+### Authentication
+- **Email OTP** (passwordless, 6-digit, 10-min expiry). Backed by Resend; dev-fallback returns the code in the response when `RESEND_API_KEY` is blank.
+- **Continue with Google** — opens auth in `WebBrowser.openAuthSessionAsync`, polls a server-side handoff record for the issued JWT.
+- **Sign in with Apple** — button rendered with a `SOON` tag; backend returns a friendly 501 (needs iOS native build to enable).
+- JWT bundle: `access_token` (12h) + `refresh_token` (30d, `jti`-bound to a `login_sessions` doc — revocation works).
+- **OTP brute-force protection**: per-email failure counter that survives re-requests; 5 wrong attempts → 15-min cool-down → 429 on `/auth/otp/request`.
 
-## Core requirements (static)
+### Security center
+- **Active sessions** list with device label, browser, IP, last-seen. Sign-out per session or all-at-once.
+- **Audit log** (last 50 events): `login.email_otp`, `login.google`, `logout`, `logout.all`, `otp.requested`, `otp.failed`, `otp.rate_limited`, `session.revoked`, `session.revoked_all`, `account.exported`, `account.deleted`.
+- **Breach detection**: when a sign-in happens on a *never-seen* device label, an email security alert is sent (no-op if Resend not configured but the in-app audit event is logged).
 
-- Bottom-tab nav matching screenshot (5 tabs, glowing center Ask).
-- Home: greeting + halo orb + priorities + 2×2 overview + quick actions + insights teaser.
-- Ask: voice-first chat with cloned-voice TTS playback.
-- Timeline: chronological feed with All/Chat/Email/Calendar/Finance filters.
-- Vault (Memory): People/Projects/Goals/Dates from auto-extracted memories.
-- You: profile, integrations, deep links into all secondary screens.
-- All other screens (Briefing, Finance, Health, Career, Goals, Reminders, Chief, Life OS, Journal, Knowledge, Graph, Family, Twin, Calls, Dashboard, History, Search, Sign-in) accessible from the You tab as a stack.
-- Production-grade ASO copy (see `/app/ASO.md`).
+### Privacy & compliance
+- Static legal pages served by FastAPI: `/api/legal/privacy`, `/api/legal/terms`, `/api/legal/cookies` (HTML, dark themed, store-submission ready).
+- **AI Data Usage** toggle (default OFF). Stored in `user_settings.ai_data_usage`.
+- **Cookie preferences**: Essential (always on), Analytics (off), Marketing (off). User can flip.
+- **Export my data** — `POST /api/account/export` returns the full per-user JSON of every collection.
+- **Permanent account deletion** — `POST /api/account/delete` sweeps 22 collections by `user_id` then deletes the user record.
 
-## What's been implemented (v1, Jan 2026)
+### Appearance & UX
+- Theme toggle: Light / Dark / System. Persisted in AsyncStorage and synced to backend `user_settings.theme`.
+- Sign-in screen with hero orb, three methods, legal links, dev-code hint.
+- Settings, Security, Help screens fully styled with `ScreenHeader` back-nav.
 
-- ✅ Renamed `Nova` → `ORA` / `ORA OS` across frontend (`app.json`, MenuSheet, chat header/strings, all secondary screens) and the backend system prompt + root API message.
-- ✅ Bottom-tab navigation with custom blur tab bar and glowing center Ask FAB.
-- ✅ New Home screen exactly matching screenshot 1 — greeting + animated halo + priorities card + 2×2 overview (Messages/Events/Tasks/Focus Score) + Quick Actions row + Insights teaser.
-- ✅ New Vault (Memory) screen with All/People/Projects/Goals/Dates filters and people/projects/dates sections.
-- ✅ New You screen with profile card, Google connect, ORA OS stats, and grouped deep links into all secondary features.
-- ✅ Redesigned Timeline tab with filter chips (All/Chat/Email/Calendar/Finance) and color-coded event rail.
-- ✅ Ask tab inherits the original cinematic chat with renamed strings, cloned-voice TTS, mic, image attach.
-- ✅ ASO/SEO: rich `+html.tsx` head (Open Graph, Twitter card, theme-color, app title); ASO listing copy at `/app/ASO.md`.
-- ✅ Backend wired with provided AWS Bedrock, ElevenLabs, Google OAuth and Emergent LLM keys. Backend running clean (no startup errors).
-- ✅ MongoDB switched to `ora_os` database.
+### Help & Support
+- `/api/support/faq` — 6 FAQ items (private data, sign-in, AI training opt-in, export, delete, Google).
+- `/api/support/contact` — sends a styled email to the support inbox.
+- Email + Phone contact cards plus a Bug / Feature toggle on the in-app form.
 
-## Mocked / partially implemented
+### Expo QR / Install card
+- `/api/expo-qr` returns app metadata and a `qr_image_url`.
+- `/api/expo-qr/png` generates a QR (uses `qrcode` Python lib in-process; falls back to public `api.qrserver.com` if Pillow is missing).
+- You-tab "Open on phone" card displays the QR, plus iOS + Android Expo Go install buttons.
 
-- 📞 Phone calls (`/api/calls/*`, `/api/incoming-calls/*`) — MOCKED telephony, no real provider wired (per upstream README).
-- 🏦 Banking — auto-detection from Gmail emails is real (when Google is connected); no direct bank API integration.
-- ⚠️ Google OAuth redirect URI in backend `.env` is set to the *current preview URL*. The OAuth client provided by the user may need its authorized redirect URI updated in Google Cloud Console to `https://221e78fe-2385-4da2-90f3-63d5ce6338fc.preview.emergentagent.com/api/google/callback` for OAuth to complete.
+### Encryption / storage
+- All traffic over HTTPS/TLS (via the ingress).
+- Tokens stored on the device with **expo-secure-store** (Keychain / EncryptedSharedPrefs).
+- Database at rest: relies on the platform Mongo's storage-level encryption.
+- OAuth + API keys never returned in any response.
 
-## Prioritized backlog (after v1)
+### Multi-tenant data isolation
+- v1.1 introduces a **global Bearer-token gate** on all `/api/*` endpoints except a 7-route whitelist. Until v1.2, the gate alone enforces isolation (only the authenticated owner can access any data endpoint).
+- v1.2 (next) will retrofit `user_id` filters on the 14 existing data collections (`chat_sessions`, `chat_messages`, `memories`, `goals`, `reminders`, `journal_entries`, `health_logs`, `transactions`, `notifications`, `jobs`, `career_profile`, `knowledge_docs`, `knowledge_chunks`, `phone_calls`).
 
-P0
-- App-store icon + adaptive icon final art and splash screen artwork.
-- Wire pixel-perfect Insights screen (screenshot 3) with All/Work/Health/Finance/Career chips on top of existing `/dashboard` data.
-- E2E test of Google OAuth happy path on Expo Go.
+## Testing
+
+- **v1.0 backend**: 21/21 pass (`test_ora_os_api.py` — now stale due to auth-gate, kept for reference).
+- **v1.1 backend**: 31/31 pass (`test_auth_v11.py` — full auth, security, settings, export/delete, Expo QR, legal, support flow). One identified minor — OTP-lockout-bypass — was fixed and verified manually via curl after the run.
+
+## Mocked / partial
+
+- **Apple Sign-In** — button visible, real flow blocked on iOS native build.
+- **Phone calls** — `/api/calls/*` and `/api/incoming-calls/*` are MOCKED telephony (inherited from upstream).
+- **Multi-user data scoping** — v1.1 protects via auth gate, full row-level `user_id` scope arrives in v1.2.
+- **Resend** — current `RESEND_API_KEY=` is intentionally blank so v1 incurs **zero email cost**; OTP codes return in the API response under `dev_code` for testing. Add a real key before public launch.
+
+## ⚠️ Action required from user
+
+1. Update the Google OAuth client's authorized redirect URI to:
+   `https://221e78fe-2385-4da2-90f3-63d5ce6338fc.preview.emergentagent.com/api/google/callback`
+2. Confirm final app name (placeholder is `ORA OS`).
+3. Before public launch: register `oraos.app` (or your final domain), then verify it with Resend so emails are delivered from a branded sender. Until then, the dev fallback keeps the OTP flow testable for free.
+4. Privacy policy URL for store submission: use `https://<your-domain>/api/legal/privacy` (already live on the preview).
+
+## Prioritized backlog
+
+P0 (v1.2)
+- Retrofit `user_id` filter on the 14 existing data collections.
+- Real Resend domain + API key (move dev fallback behind a feature flag).
+- Apple Sign-In wiring on a real iOS build.
 
 P1
-- Notification ingestion native module for live transaction capture (Android).
-- Push notifications via Expo Push for missed-call reminders.
-- Pixel-tight Health and Career screens matching screenshots 5 & 6.
+- Pixel-tight Insights and Health screens to match screenshots 3 & 5 frame-perfectly.
+- Push notifications via Expo Push for breach alerts and missed-call reminders.
+- Email-export download (currently just an alert; build a "share JSON" sheet via expo-sharing).
 
 P2
-- Real telephony provider (Twilio / Vonage) replacing the mocked call manager.
-- Apple Sign-in (mandatory for App Store if Google is offered).
-- Family Hub: shared calendar / shared memory.
-
-## Next action items
-
-1. User to update the Google OAuth client's authorized redirect URI to the current preview URL.
-2. Confirm final app name (placeholder is `ORA OS`).
-3. Run testing agent for full backend regression + key UI flows.
+- Apple Sign-In, Sign-in with passkeys.
+- Family Hub: shared calendar / shared memory across users.
+- Bring-your-own-OpenAI / Bring-your-own-Anthropic keys.

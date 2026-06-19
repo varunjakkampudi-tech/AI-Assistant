@@ -51,6 +51,17 @@ def generate_otp() -> str:
 
 
 async def store_otp(db, email: str, ip: Optional[str]) -> str:
+    # Reject if recently locked out for this email
+    lock = await db.otp_locks.find_one({"email": email.lower().strip()}, {"_id": 0})
+    if lock and lock.get("locked_until"):
+        try:
+            until = datetime.fromisoformat(lock["locked_until"].replace("Z", "+00:00"))
+            if until > _now():
+                raise PermissionError(f"locked_until:{lock['locked_until']}")
+        except PermissionError:
+            raise
+        except Exception:
+            pass
     code = generate_otp()
     await db.otp_codes.delete_many({"email": email.lower(), "used": False})
     await db.otp_codes.insert_one({
@@ -67,8 +78,18 @@ async def store_otp(db, email: str, ip: Optional[str]) -> str:
 
 
 async def verify_otp(db, email: str, code: str) -> bool:
+    email_l = email.lower().strip()
+    # Per-email lockout check
+    lock = await db.otp_locks.find_one({"email": email_l}, {"_id": 0})
+    if lock and lock.get("locked_until"):
+        try:
+            until = datetime.fromisoformat(lock["locked_until"].replace("Z", "+00:00"))
+            if until > _now():
+                return False
+        except Exception:
+            pass
     rec = await db.otp_codes.find_one(
-        {"email": email.lower().strip(), "used": False},
+        {"email": email_l, "used": False},
         sort=[("created_at", -1)],
     )
     if not rec:
@@ -82,12 +103,19 @@ async def verify_otp(db, email: str, code: str) -> bool:
             return False
     if not exp or exp < _now():
         return False
-    if rec.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
-        return False
     if not _verify_code(code, rec["code_hash"]):
         await db.otp_codes.update_one({"id": rec["id"]}, {"$inc": {"attempts": 1}})
+        # Increment per-email failure counter
+        new_count = (lock.get("count", 0) if lock else 0) + 1
+        patch: Dict[str, Any] = {"email": email_l, "count": new_count, "last_at": _iso(_now())}
+        if new_count >= OTP_MAX_ATTEMPTS:
+            patch["locked_until"] = _iso(_now() + timedelta(minutes=15))
+            patch["count"] = 0
+        await db.otp_locks.update_one({"email": email_l}, {"$set": patch}, upsert=True)
         return False
     await db.otp_codes.update_one({"id": rec["id"]}, {"$set": {"used": True, "used_at": _iso(_now())}})
+    # Clear failure counter on success
+    await db.otp_locks.delete_one({"email": email_l})
     return True
 
 
