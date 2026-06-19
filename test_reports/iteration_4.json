@@ -26,7 +26,7 @@
   ],
   "updated_files": [],
   "success_rate": {"backend": "100% (37/37 phase-2 pytest + curl spot checks)", "frontend": "100% (3/3 new screens, 3/3 menu links, modal+submit on finance, suggest-reply on twin, quick-action nav on chief all verified)"},
-  "test_credentials": "No auth required — backend exposed at https://ora-expo-deployment.preview.emergentagent.com without bearer tokens.",
+  "test_credentials": "No auth required — backend exposed at https://mobile-preview-expo-1.preview.emergentagent.com without bearer tokens.",
   "seed_data_creation": "One real finance txn ingested through the UI during the test ('HDFC: Rs.250 debited at Zomato on 02-Jul' -> food/Zomato/250). Twin profile has Vijay (colleague) + learned phrases from prior iterations. No additional cleanup added beyond what conftest already handles.",
   "retest_needed": false,
   "should_main_agent_self_test": true,

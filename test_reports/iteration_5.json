@@ -30,7 +30,7 @@
     "/app/backend/tests/test_nova_phase3.py (new file — 11 tests)"
   ],
   "success_rate": {"backend": "100% (11/11 phase-3 pytest, all 5 new endpoints + chat draft_reply intent + reminder intent regression)", "frontend": "100% (search renders + answers, life OS renders 5 dimensions + recommendations + refresh, menu nav to /search and /life works)"},
-  "test_credentials": "No auth required — backend exposed at https://ora-expo-deployment.preview.emergentagent.com without bearer tokens.",
+  "test_credentials": "No auth required — backend exposed at https://mobile-preview-expo-1.preview.emergentagent.com without bearer tokens.",
   "seed_data_creation": "Created 1 health-tagged goal 'TEST_Run 5km daily' with progress=30 to validate Life OS health bump (auto-cleaned by goal collection naming convention).",
   "retest_needed": false,
   "should_main_agent_self_test": true,

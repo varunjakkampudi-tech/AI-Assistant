@@ -27,7 +27,7 @@
     "/app/backend/tests/test_ora_os_api.py (new file — 21 tests, all passing)"
   ],
   "success_rate": {"backend": "100% (21/21)", "frontend": "not tested (skip per request)"},
-  "test_credentials": "No auth required — backend exposed at https://ora-expo-deployment.preview.emergentagent.com without bearer tokens.",
+  "test_credentials": "No auth required — backend exposed at https://mobile-preview-expo-1.preview.emergentagent.com without bearer tokens.",
   "seed_data_creation": "All test data prefixed with TEST_ and cleaned up via teardown_class hooks: TEST_OraSession, TEST_OraChat, TEST_FavouriteColor (memory), TEST_OraGoal, TEST_ora reminder, water_glasses health log. No production data touched.",
   "retest_needed": false,
   "should_main_agent_self_test": true,
