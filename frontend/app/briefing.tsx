@@ -72,9 +72,11 @@ export default function BriefingScreen() {
           granted = req.granted;
         }
         if (granted) {
-          const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Low,
-          });
+          // Hard timeout so a stuck GPS lookup in Expo Go never blocks the briefing
+          const pos = await Promise.race<any>([
+            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("location-timeout")), 5000)),
+          ]);
           lat = pos.coords.latitude;
           lon = pos.coords.longitude;
         }
