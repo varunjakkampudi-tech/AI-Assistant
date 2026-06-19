@@ -9,7 +9,7 @@ import logging
 import tempfile
 from pathlib import Path
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Dict
+from typing import List, Optional, Literal, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta
 import httpx
@@ -32,6 +32,7 @@ import timeline as tl
 import journal as journal_mod
 import knowledge_graph as kg
 import health as health_mod
+import career as career_mod
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -2113,8 +2114,178 @@ async def family_hub():
     }
 
 
-# ==================== AI COMPANION NUDGES ====================
+# ==================== CAREER COPILOT ====================
 
+class CareerProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    headline: Optional[str] = None
+    summary: Optional[str] = None
+    current_role: Optional[str] = None
+    current_company: Optional[str] = None
+    years_experience: Optional[int] = None
+    location: Optional[str] = None
+    remote_preference: Optional[str] = None
+    expected_ctc_inr: Optional[int] = None
+    notice_period_days: Optional[int] = None
+    open_to_work: Optional[bool] = None
+    links: Optional[Dict[str, str]] = None
+    skills: Optional[List[str]] = None
+    certifications: Optional[List[str]] = None
+    experience: Optional[List[Dict[str, Any]]] = None
+    education: Optional[List[Dict[str, Any]]] = None
+    projects: Optional[List[Dict[str, Any]]] = None
+    filters: Optional[Dict[str, Any]] = None
+
+
+@api_router.get("/career/profile")
+async def career_profile_get():
+    return await career_mod.get_profile(db)
+
+
+@api_router.put("/career/profile")
+async def career_profile_put(body: CareerProfileUpdate):
+    updates = {k: v for k, v in body.dict().items() if v is not None}
+    return await career_mod.update_profile(db, updates)
+
+
+class JobUrlIngest(BaseModel):
+    url: str
+
+
+@api_router.post("/career/jobs/ingest-url")
+async def career_jobs_ingest_url(body: JobUrlIngest):
+    parsed = await career_mod.fetch_jd_from_url(body.url)
+    if not parsed.get("raw_text"):
+        raise HTTPException(400, "Couldn't extract any text from that URL. Paste the JD text manually instead.")
+    job = await career_mod.create_job(
+        db,
+        source="url",
+        source_url=body.url,
+        title=parsed.get("title") or "Untitled role",
+        company=parsed.get("company") or "",
+        location=parsed.get("location") or "",
+        raw_text=parsed.get("raw_text") or "",
+    )
+    try:
+        scored = await career_mod.score_job(db, job["id"], _bedrock_converse)
+        job["match_score"] = scored["score"]
+        job["match_breakdown"] = {k: scored[k] for k in ("strengths", "gaps", "recommendation", "rationale", "scored_at")}
+    except Exception as e:
+        logger.warning("auto-score on ingest failed: %s", e)
+    return job
+
+
+class JobManualIngest(BaseModel):
+    title: str
+    company: str = ""
+    location: str = ""
+    raw_text: str
+    source_url: Optional[str] = None
+
+
+@api_router.post("/career/jobs")
+async def career_jobs_manual(body: JobManualIngest):
+    job = await career_mod.create_job(
+        db, source="manual", source_url=body.source_url,
+        title=body.title, company=body.company, location=body.location, raw_text=body.raw_text,
+    )
+    try:
+        scored = await career_mod.score_job(db, job["id"], _bedrock_converse)
+        job["match_score"] = scored["score"]
+        job["match_breakdown"] = {k: scored[k] for k in ("strengths", "gaps", "recommendation", "rationale", "scored_at")}
+    except Exception:
+        pass
+    return job
+
+
+@api_router.get("/career/jobs")
+async def career_jobs_list(min_score: Optional[int] = None, limit: int = 100):
+    return await career_mod.list_jobs(db, min_score=min_score, limit=limit)
+
+
+@api_router.delete("/career/jobs/{job_id}")
+async def career_jobs_delete(job_id: str):
+    ok = await career_mod.delete_job(db, job_id)
+    if not ok:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@api_router.post("/career/jobs/{job_id}/score")
+async def career_jobs_rescore(job_id: str):
+    try:
+        return await career_mod.score_job(db, job_id, _bedrock_converse)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+class ArtifactKindReq(BaseModel):
+    kind: str   # 'resume' | 'cover_letter' | 'interview_kit'
+
+
+@api_router.post("/career/jobs/{job_id}/generate")
+async def career_generate(job_id: str, body: ArtifactKindReq):
+    try:
+        twin = get_digital_twin()
+        style = await twin.get_style_prompt()
+        return await career_mod.generate_artifact(db, job_id, body.kind, _bedrock_converse, style_prompt=style)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@api_router.get("/career/jobs/{job_id}/artifact/{kind}")
+async def career_artifact(job_id: str, kind: str):
+    art = await career_mod.get_artifact(db, job_id, kind)
+    if not art:
+        raise HTTPException(404, f"No {kind} generated yet for this job.")
+    return art
+
+
+class ApplicationUpdate(BaseModel):
+    stage: str
+    notes: Optional[str] = ""
+
+
+@api_router.post("/career/jobs/{job_id}/application")
+async def career_application_set(job_id: str, body: ApplicationUpdate):
+    try:
+        return await career_mod.upsert_application(db, job_id, body.stage, body.notes or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@api_router.get("/career/pipeline")
+async def career_pipeline():
+    return await career_mod.pipeline_summary(db)
+
+
+@api_router.get("/career/boards")
+async def career_boards_list():
+    return await career_mod.list_boards(db)
+
+
+class BoardsReplace(BaseModel):
+    items: List[Dict[str, Any]]
+
+
+@api_router.put("/career/boards")
+async def career_boards_replace(body: BoardsReplace):
+    return await career_mod.replace_boards(db, body.items)
+
+
+@api_router.post("/career/sync")
+async def career_sync(auto_score: bool = True, max_per_board: int = 30):
+    return await career_mod.sync_boards(db, _bedrock_converse,
+                                        auto_score=auto_score, max_per_board=max_per_board)
+
+
+@api_router.get("/career/sync-status")
+async def career_sync_status():
+    info = await db.sync_state.find_one({"id": "career_boards"}, {"_id": 0})
+    return info or {"last_run_at": None, "new_jobs": 0, "scored": 0}
+
+
+# ==================== AI COMPANION NUDGES ====================
 @api_router.get("/companion/nudges")
 async def companion_nudges():
     """Habit-aware proactive suggestions (gym streak, sleep, goals, finance)."""

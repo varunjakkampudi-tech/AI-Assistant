@@ -29,6 +29,7 @@ const ITEMS: Item[] = [
   { icon: "trophy-outline", label: "Goals", route: "/goals", testID: "menu-goals" },
   { icon: "alarm-outline", label: "Reminders", route: "/reminders", testID: "menu-reminders" },
   { icon: "wallet-outline", label: "Finance Brain", route: "/finance", testID: "menu-finance" },
+  { icon: "briefcase-outline", label: "Career Copilot", route: "/career", testID: "menu-career" },
   { icon: "analytics-outline", label: "Dashboard", route: "/dashboard", testID: "menu-dashboard" },
   { icon: "library-outline", label: "Knowledge Vault", route: "/knowledge", testID: "menu-knowledge" },
   { icon: "call-outline", label: "AI Calls", route: "/calls", testID: "menu-calls" },

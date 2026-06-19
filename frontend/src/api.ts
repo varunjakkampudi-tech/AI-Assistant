@@ -406,4 +406,33 @@ export const api = {
 
   // ==================== COMPANION NUDGES ====================
   companionNudges: () => jfetch<any[]>("/companion/nudges"),
+
+  // ==================== CAREER COPILOT ====================
+  careerProfileGet: () => jfetch<any>("/career/profile"),
+  careerProfilePut: (updates: Record<string, any>) =>
+    jfetch<any>("/career/profile", { method: "PUT", body: JSON.stringify(updates) }),
+
+  careerJobsList: (min_score?: number, limit = 100) =>
+    jfetch<any[]>(`/career/jobs?limit=${limit}${min_score != null ? `&min_score=${min_score}` : ""}`),
+  careerJobIngestUrl: (url: string) =>
+    jfetch<any>("/career/jobs/ingest-url", { method: "POST", body: JSON.stringify({ url }) }),
+  careerJobManual: (body: { title: string; company?: string; location?: string; raw_text: string; source_url?: string }) =>
+    jfetch<any>("/career/jobs", { method: "POST", body: JSON.stringify(body) }),
+  careerJobRescore: (id: string) => jfetch<any>(`/career/jobs/${id}/score`, { method: "POST" }),
+  careerJobDelete: (id: string) => jfetch<{ ok: boolean }>(`/career/jobs/${id}`, { method: "DELETE" }),
+
+  careerGenerate: (id: string, kind: "resume" | "cover_letter" | "interview_kit") =>
+    jfetch<any>(`/career/jobs/${id}/generate`, { method: "POST", body: JSON.stringify({ kind }) }),
+  careerArtifact: (id: string, kind: string) => jfetch<any>(`/career/jobs/${id}/artifact/${kind}`),
+
+  careerApplicationSet: (id: string, stage: string, notes = "") =>
+    jfetch<any>(`/career/jobs/${id}/application`, { method: "POST", body: JSON.stringify({ stage, notes }) }),
+
+  careerPipeline: () => jfetch<any>("/career/pipeline"),
+  careerBoardsList: () => jfetch<any[]>("/career/boards"),
+  careerBoardsReplace: (items: Array<{ name: string; kind: string; slug: string }>) =>
+    jfetch<any[]>("/career/boards", { method: "PUT", body: JSON.stringify({ items }) }),
+  careerSync: (auto_score = true, max_per_board = 25) =>
+    jfetch<any>(`/career/sync?auto_score=${auto_score}&max_per_board=${max_per_board}`, { method: "POST" }),
+  careerSyncStatus: () => jfetch<any>("/career/sync-status"),
 };

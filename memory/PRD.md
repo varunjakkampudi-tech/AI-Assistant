@@ -60,3 +60,48 @@ with maximum automation — the user explicitly does NOT want to add things manu
 - HealthKit native bridge for auto sleep/steps
 - WhatsApp + SMS ingestion (currently only Gmail)
 - Voice journal mode: speak the day, AI transcribes + writes
+
+## Career Copilot (added Jan 2026)
+
+### Architecture
+```
+Job Monitor Agent   (sync_boards)
+       ↓
+JD Analyzer Agent   (fetch_jd_from_url / score_job)
+       ↓
+Resume Optimizer    (generate_artifact kind=resume)
+       ↓
+Cover Letter Agent  (generate_artifact kind=cover_letter)
+       ↓
+Interview Agent     (generate_artifact kind=interview_kit)
+       ↓
+Career Dashboard    (Discover / Pipeline / Profile tabs)
+```
+
+### Endpoints
+- GET/PUT `/api/career/profile`  — master resume + filters
+- POST `/api/career/jobs/ingest-url`  — fetch + parse + auto-score from URL
+- POST `/api/career/jobs`  — manual paste of JD text
+- GET `/api/career/jobs[?min_score=]`
+- DELETE `/api/career/jobs/{id}`
+- POST `/api/career/jobs/{id}/score`  — rescore
+- POST `/api/career/jobs/{id}/generate` `{kind}` — resume/cover_letter/interview_kit
+- GET `/api/career/jobs/{id}/artifact/{kind}`
+- POST `/api/career/jobs/{id}/application` `{stage, notes}`
+- GET `/api/career/pipeline` — counts + metrics
+- GET/PUT `/api/career/boards`  — Greenhouse/Lever sources
+- POST `/api/career/sync` — pull from all boards (auto-score on)
+- GET `/api/career/sync-status`
+
+### Data flow per feature
+- **Discovery (manual)**: User pastes URL → httpx fetches → JSON-LD JobPosting extractor → falls back to stripped HTML → stored in `db.career_jobs`.
+- **Discovery (auto)**: `sync_boards` hits Greenhouse + Lever public JSON APIs for every configured board. Title/location filters applied. Dedup by `external_id`. Then `score_job` for each. Stored.
+- **Scoring**: Bedrock Nova receives resume profile + JD → returns JSON `{score, strengths, gaps, recommendation, rationale}`. Persisted in `match_breakdown`.
+- **Tailored resume**: Bedrock receives full profile + JD → returns `{summary, top_skills, experience_bullets[10-14], key_projects, suggested_resume_title}`. Saved as artifact (overwrites previous).
+- **Cover letter**: Bedrock receives profile + JD + Digital Twin style → returns `{subject, body}`.
+- **Interview kit**: Bedrock returns `{technical[15], scenario[8], managerial[6], topics_to_revise[8]}` tailored to the JD's stack.
+- **Pipeline**: `db.career_applications` keyed by `job_id`. Each stage transition appends to `history[]`.
+
+### Explicit non-goals (and why)
+- LinkedIn / Naukri / Indeed scraping: ToS-prohibited and aggressively bot-blocked → would break in <1 week and risk account suspension.
+- Auto-submit applications across arbitrary sites: would need a long-running Playwright worker with stored credentials + CAPTCHA solving. Out of scope for the FastAPI process; can ship as a separate worker later if needed.
