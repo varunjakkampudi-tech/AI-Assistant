@@ -11,9 +11,11 @@ import {
   Modal,
   Alert,
   Linking,
+  Switch,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
+import * as DocumentPicker from "expo-document-picker";
 
 import { theme } from "@/src/theme";
 import { api } from "@/src/api";
@@ -176,6 +178,29 @@ function DiscoverView({ jobs, onOpen, onSync, syncing, syncStatus }: {
   jobs: Job[]; onOpen: (j: Job) => void; onSync: () => void; syncing: boolean; syncStatus: any;
 }) {
   const sorted = useMemo(() => [...jobs].sort((a, b) => (b.match_score ?? -1) - (a.match_score ?? -1)), [jobs]);
+  const [applying, setApplying] = useState<string | null>(null);
+
+  const applyToJob = async (job: Job, e: any) => {
+    e?.stopPropagation?.();
+    setApplying(job.id);
+    try {
+      const r = await api.careerJobApply(job.id);
+      if (r.apply_url) {
+        Alert.alert(
+          "Applied! 🚀",
+          "ORA generated your tailored resume and cover letter. Opening the original posting so you can complete the submission.",
+          [
+            { text: "OK", onPress: () => Linking.openURL(r.apply_url) },
+          ],
+        );
+      } else {
+        Alert.alert("Applied! 🚀", "Tailored resume + cover letter generated. Open the job from the list to copy them.");
+      }
+    } catch (err: any) {
+      Alert.alert("Couldn't apply", err?.message || "");
+    } finally { setApplying(null); }
+  };
+
   return (
     <>
       <View style={styles.syncCard}>
@@ -232,6 +257,23 @@ function DiscoverView({ jobs, onOpen, onSync, syncing, syncStatus }: {
                   <View style={styles.stagePill}>
                     <Text style={styles.stagePillText}>{j.application.stage}</Text>
                   </View>
+                )}
+                {!j.application && (
+                  <Pressable
+                    style={[styles.applyBtn, applying === j.id && { opacity: 0.55 }]}
+                    onPress={(e) => applyToJob(j, e)}
+                    disabled={applying === j.id}
+                    testID={`career-apply-${j.id}`}
+                  >
+                    {applying === j.id ? (
+                      <ActivityIndicator size="small" color={theme.color.onBrand} />
+                    ) : (
+                      <>
+                        <Ionicons name="flash" size={11} color={theme.color.onBrand} />
+                        <Text style={styles.applyBtnText}>Apply</Text>
+                      </>
+                    )}
+                  </Pressable>
                 )}
               </View>
             </View>
@@ -313,6 +355,59 @@ function ProfileView({ profile, onChange }: {
   const [years, setYears] = useState(String(profile?.years_experience || ""));
   const [location, setLocation] = useState(profile?.location || "");
   const [saving, setSaving] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [autoApply, setAutoApply] = useState<boolean>(!!profile?.auto_apply_enabled);
+  const [minScore, setMinScore] = useState<string>(String(profile?.auto_apply_min_score ?? 75));
+  const [autoBusy, setAutoBusy] = useState(false);
+  const resumeFile = profile?.resume_filename;
+  const resumeWhen = profile?.resume_uploaded_at;
+
+  const pickResume = async () => {
+    try {
+      const r = await DocumentPicker.getDocumentAsync({
+        type: [
+          "application/pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "text/plain",
+        ],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (r.canceled || !r.assets?.length) return;
+      const f = r.assets[0];
+      setParsing(true);
+      const res = await api.careerParseResume(
+        f.uri,
+        f.name || "resume.pdf",
+        f.mimeType || "application/pdf",
+      );
+      const np = res.profile;
+      // Hydrate UI fields with extracted data
+      setName(np?.name || name);
+      setHeadline(np?.headline || headline);
+      setSummary(np?.summary || summary);
+      setLocation(np?.location || location);
+      setYears(String(np?.years_experience || years));
+      setSkills((np?.skills || []).join(", "));
+      setCerts((np?.certifications || []).join(", "));
+      Alert.alert(
+        "Resume parsed",
+        `Auto-filled: ${(res.extracted_fields || []).join(", ")}\n\nReview and tap “Save profile”.`,
+      );
+    } catch (e: any) {
+      Alert.alert("Couldn't parse", e?.message || "");
+    } finally { setParsing(false); }
+  };
+
+  const toggleAutoApply = async (next: boolean) => {
+    setAutoBusy(true);
+    try {
+      await api.careerAutoApplyToggle(next, parseInt(minScore, 10) || 75);
+      setAutoApply(next);
+    } catch (e: any) {
+      Alert.alert("Couldn't update", e?.message || "");
+    } finally { setAutoBusy(false); }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -330,6 +425,7 @@ function ProfileView({ profile, onChange }: {
           titles: titles.split(",").map((s) => s.trim()).filter(Boolean),
           locations: locations.split(",").map((s) => s.trim()).filter(Boolean),
         },
+        auto_apply_min_score: parseInt(minScore, 10) || 75,
       });
       Alert.alert("Saved", "Resume profile updated.");
     } catch (e: any) {
@@ -340,6 +436,75 @@ function ProfileView({ profile, onChange }: {
   if (!profile) return null;
   return (
     <View style={{ gap: theme.spacing.md }}>
+      {/* Resume upload card */}
+      <View style={styles.resumeCard} testID="career-resume-card">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.md }}>
+          <Ionicons name="document-attach" size={26} color={theme.color.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.resumeTitle}>Upload résumé</Text>
+            <Text style={styles.resumeSub} numberOfLines={1}>
+              {resumeFile
+                ? `Last: ${resumeFile}${resumeWhen ? ` · ${new Date(resumeWhen).toLocaleDateString()}` : ""}`
+                : "PDF · DOCX · TXT. We extract name, skills, experience and more."}
+            </Text>
+          </View>
+          <Pressable
+            style={[styles.uploadBtn, parsing && { opacity: 0.6 }]}
+            onPress={pickResume}
+            disabled={parsing}
+            testID="career-upload-resume"
+          >
+            {parsing ? <ActivityIndicator color={theme.color.onBrand} size="small" /> : (
+              <>
+                <Ionicons name="cloud-upload-outline" size={14} color={theme.color.onBrand} />
+                <Text style={styles.uploadText}>{resumeFile ? "Replace" : "Upload"}</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Auto-apply card */}
+      <View style={styles.autoCard} testID="career-auto-apply-card">
+        <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.md }}>
+          <Ionicons name="flash" size={22} color={theme.color.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.resumeTitle}>One-click & auto-apply</Text>
+            <Text style={styles.resumeSub}>
+              Tap “Apply” on the Discover tab and ORA generates a tailored resume + cover letter and marks the job as applied.
+              Toggle this on to apply automatically when a match scores above your threshold.
+            </Text>
+          </View>
+          <Switch
+            value={autoApply}
+            onValueChange={toggleAutoApply}
+            disabled={autoBusy}
+            trackColor={{ false: theme.color.surfaceTertiary, true: theme.color.brand }}
+            thumbColor={autoApply ? theme.color.onBrand : "#888"}
+            testID="career-auto-apply-toggle"
+          />
+        </View>
+        {autoApply && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing.sm, marginTop: theme.spacing.sm }}>
+            <Text style={styles.fieldLabel}>Min match score</Text>
+            <TextInput
+              style={[styles.field, { width: 70, paddingVertical: 6, textAlign: "center" }]}
+              value={minScore}
+              onChangeText={(v) => setMinScore(v.replace(/[^0-9]/g, "").slice(0, 3))}
+              keyboardType="number-pad"
+              testID="career-auto-min-score"
+            />
+            <Pressable
+              style={styles.miniBtn}
+              onPress={() => toggleAutoApply(true)}
+              testID="career-auto-min-save"
+            >
+              <Text style={styles.miniBtnText}>Save</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+
       <Field label="Name" value={name} onChangeText={setName} testID="career-name" />
       <Field label="Headline" value={headline} onChangeText={setHeadline} testID="career-headline" />
       <Field label="Summary" value={summary} onChangeText={setSummary} multiline testID="career-summary" />
@@ -692,6 +857,36 @@ const styles = StyleSheet.create({
   jobMeta: { color: theme.color.onSurfaceSecondary, fontSize: 10, textTransform: "uppercase", letterSpacing: 1 },
   stagePill: { backgroundColor: theme.color.brand, paddingHorizontal: 8, paddingVertical: 2, borderRadius: theme.radius.pill },
   stagePillText: { color: theme.color.onBrand, fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
+  applyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    backgroundColor: theme.color.brand,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: theme.radius.pill,
+  },
+  applyBtnText: { color: theme.color.onBrand, fontSize: 11, fontWeight: "700", letterSpacing: 0.4 },
+  resumeCard: {
+    backgroundColor: theme.color.brandTertiary,
+    borderRadius: theme.radius.lg, padding: theme.spacing.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.brandSecondary,
+  },
+  resumeTitle: { color: theme.color.onSurface, fontSize: 14, fontWeight: "600" },
+  resumeSub: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  uploadBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: theme.color.brand,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill,
+  },
+  uploadText: { color: theme.color.onBrand, fontSize: 12, fontWeight: "700" },
+  autoCard: {
+    backgroundColor: theme.color.surfaceSecondary,
+    borderRadius: theme.radius.lg, padding: theme.spacing.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+  },
+  miniBtn: {
+    backgroundColor: theme.color.brand, paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: theme.radius.pill,
+  },
+  miniBtnText: { color: theme.color.onBrand, fontSize: 11, fontWeight: "700" },
 
   metricsRow: { flexDirection: "row", gap: theme.spacing.sm },
   metricBox: {

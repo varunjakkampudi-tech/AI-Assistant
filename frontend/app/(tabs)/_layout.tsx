@@ -23,7 +23,6 @@ const TABS: TabConfig[] = [
   { name: "timeline", label: "Timeline", icon: "menu-outline", iconFocused: "menu", testID: "tab-timeline" },
   { name: "ask", label: "Ask", icon: "sparkles", iconFocused: "sparkles", testID: "tab-ask" },
   { name: "vault", label: "Vault", icon: "albums-outline", iconFocused: "albums", testID: "tab-vault" },
-  { name: "you", label: "You", icon: "person-outline", iconFocused: "person", testID: "tab-you" },
 ];
 
 function CustomTabBar({ state, navigation }: any) {
@@ -118,7 +117,6 @@ export default function TabsLayout() {
       <Tabs.Screen name="timeline" options={{ title: "Timeline" }} />
       <Tabs.Screen name="ask" options={{ title: "Ask" }} />
       <Tabs.Screen name="vault" options={{ title: "Vault" }} />
-      <Tabs.Screen name="you" options={{ title: "You" }} />
     </Tabs>
   );
 }

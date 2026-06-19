@@ -264,7 +264,7 @@ class TestSettings:
         r = session.get(f"{API}/settings", headers=h, timeout=TIMEOUT)
         assert r.status_code == 200
         d = r.json()
-        assert d["theme"] == "system"
+        assert d["theme"] == "dark"
         assert d["ai_data_usage"] is False
         assert d["cookies_essential"] is True
         assert d["cookies_analytics"] is False

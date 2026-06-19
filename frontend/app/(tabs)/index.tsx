@@ -19,6 +19,8 @@ import { theme } from "@/src/theme";
 import { api } from "@/src/api";
 import VoiceOrb from "@/src/components/VoiceOrb";
 import { useAuth, useColors } from "@/src/auth";
+import ProfileSheet from "@/src/components/ProfileSheet";
+import MenuSheet from "@/src/components/MenuSheet";
 
 interface Briefing {
   greeting: string;
@@ -62,6 +64,8 @@ export default function HomeScreen() {
   const [data, setData] = useState<Briefing | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showProfile, setShowProfile] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
 
   const load = useCallback(async () => {
     let lat: number | null = null;
@@ -116,19 +120,8 @@ export default function HomeScreen() {
       <SafeAreaView edges={["top"]} style={{ backgroundColor: c.surface }}>
         <View style={styles.topBar}>
           <Pressable
-            style={styles.iconBtn}
-            onPress={() => router.push("/you")}
-            hitSlop={10}
-            testID="home-menu-button"
-          >
-            <Ionicons name="menu" size={20} color={c.onSurface} />
-          </Pressable>
-          <View style={styles.brandWrap} pointerEvents="none">
-            <Text style={styles.brandWord} testID="home-brand">ORA OS</Text>
-          </View>
-          <Pressable
             style={styles.avatarBtn}
-            onPress={() => router.push("/you")}
+            onPress={() => setShowProfile(true)}
             testID="home-avatar-button"
           >
             <LinearGradient
@@ -137,6 +130,17 @@ export default function HomeScreen() {
             >
               <Text style={styles.avatarInitial} testID="home-avatar-initial">{initial}</Text>
             </LinearGradient>
+          </Pressable>
+          <View style={styles.brandWrap} pointerEvents="none">
+            <Text style={styles.brandWord} testID="home-brand">ORA OS</Text>
+          </View>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => setShowMenu(true)}
+            hitSlop={10}
+            testID="home-menu-button"
+          >
+            <Ionicons name="menu" size={20} color={c.onSurface} />
           </Pressable>
         </View>
       </SafeAreaView>
@@ -248,6 +252,8 @@ export default function HomeScreen() {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+      <ProfileSheet visible={showProfile} onClose={() => setShowProfile(false)} />
+      <MenuSheet visible={showMenu} onClose={() => setShowMenu(false)} />
     </View>
   );
 }

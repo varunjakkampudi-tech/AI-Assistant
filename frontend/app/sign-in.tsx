@@ -134,12 +134,15 @@ export default function SignInScreen() {
             </Pressable>
 
             <Pressable
-              style={[styles.bigBtn, styles.emailBtn]}
-              onPress={onEmail}
+              style={[styles.bigBtn, styles.emailBtn, { opacity: 0.55 }]}
+              onPress={() => Alert.alert("Coming soon", "Email sign-in is being polished. Use Continue with Google for now.")}
               testID="signin-email-btn"
             >
               <Ionicons name="mail" size={18} color={c.brand} />
               <Text style={[styles.bigBtnText, { color: c.brand }]}>Sign in with Email</Text>
+              <View style={styles.comingPill}>
+                <Text style={styles.comingText}>SOON</Text>
+              </View>
             </Pressable>
 
             <Text style={styles.legalText}>

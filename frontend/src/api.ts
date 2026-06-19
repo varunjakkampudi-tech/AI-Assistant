@@ -444,4 +444,31 @@ export const api = {
   careerSync: (auto_score = true, max_per_board = 25) =>
     jfetch<any>(`/career/sync?auto_score=${auto_score}&max_per_board=${max_per_board}`, { method: "POST" }),
   careerSyncStatus: () => jfetch<any>("/career/sync-status"),
+
+  // Resume upload + auto-apply
+  careerParseResume: async (uri: string, filename: string, mimeType: string) => {
+    const form = new FormData();
+    // @ts-ignore RN FormData
+    form.append("file", { uri, name: filename, type: mimeType });
+    const headers: any = {};
+    if (_accessToken) headers.Authorization = `Bearer ${_accessToken}`;
+    const res = await fetch(`${BASE}/api/career/profile/parse-resume`, { method: "POST", body: form as any, headers });
+    if (!res.ok) throw new Error(`Resume parse ${res.status}: ${await res.text()}`);
+    return res.json();
+  },
+  careerAutoApplyToggle: (enabled: boolean, min_score = 75) =>
+    jfetch<any>("/career/profile/auto-apply", { method: "PUT", body: JSON.stringify({ enabled, min_score }) }),
+  careerJobApply: (id: string) =>
+    jfetch<any>(`/career/jobs/${id}/apply`, { method: "POST" }),
+
+  // Recent transactions
+  financeTransactions: (limit = 30, days = 90) =>
+    jfetch<any[]>(`/finance/transactions?limit=${limit}&days=${days}`),
+
+  // Suggestions
+  suggestionsList: (limit = 50) => jfetch<any[]>(`/suggestions?limit=${limit}`),
+  suggestionCreate: (body: { title: string; body: string; kind?: string }) =>
+    jfetch<any>("/suggestions", { method: "POST", body: JSON.stringify(body) }),
+  suggestionDelete: (id: string) =>
+    jfetch<{ ok: boolean }>(`/suggestions/${id}`, { method: "DELETE" }),
 };

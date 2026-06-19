@@ -79,6 +79,7 @@ export default function FinanceScreen() {
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
   const [insights, setInsights] = useState<Insight[]>([]);
   const [recurring, setRecurring] = useState<RecurringTx[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [days, setDays] = useState(30);
@@ -93,18 +94,20 @@ export default function FinanceScreen() {
 
   const load = useCallback(async () => {
     try {
-      const [s, ins, rec, gs, ss] = await Promise.all([
+      const [s, ins, rec, gs, ss, tx] = await Promise.all([
         api.financeSpendingSummary(days),
         api.financeInsights(days).catch(() => []),
         api.financeRecurring().catch(() => []),
         api.googleStatus().catch(() => ({ connected: false })),
         api.financeSyncStatus().catch(() => null),
+        api.financeTransactions(40, days).catch(() => []),
       ]);
       setSummary(s);
       setInsights(Array.isArray(ins) ? ins : []);
       setRecurring(Array.isArray(rec) ? rec : []);
       setGoogleConnected(!!gs?.connected);
       setSyncStatus(ss as any);
+      setTransactions(Array.isArray(tx) ? tx : []);
     } catch (e) {
       console.warn("finance load failed", e);
     } finally {
@@ -576,7 +579,7 @@ const styles = StyleSheet.create({
   catBody: { flex: 1 },
   catTopLine: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   catName: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500" },
-  catAmount: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 14 },
+  catAmount: { color: "#ef4444", fontFamily: theme.font.display, fontSize: 14, fontWeight: "600" },
   catBar: {
     height: 4,
     backgroundColor: theme.color.surfaceTertiary,
@@ -594,7 +597,7 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.color.divider,
   },
   merchantName: { color: theme.color.onSurface, fontSize: 14, flex: 1 },
-  merchantAmount: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 14 },
+  merchantAmount: { color: "#ef4444", fontFamily: theme.font.display, fontSize: 14, fontWeight: "600" },
   recurringRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -604,6 +607,19 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.color.divider,
   },
   recurringMeta: { color: theme.color.onSurfaceSecondary, fontSize: 12, marginTop: 2 },
+  txRow: {
+    flexDirection: "row", alignItems: "center", gap: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.color.divider,
+  },
+  txIconWrap: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: "center", justifyContent: "center",
+  },
+  txName: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500" },
+  txMeta: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2, textTransform: "capitalize" },
+  txAmount: { fontFamily: theme.font.display, fontSize: 15, fontWeight: "700" },
   emptyCard: {
     backgroundColor: theme.color.surfaceSecondary,
     borderRadius: theme.radius.lg,

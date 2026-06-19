@@ -52,11 +52,12 @@ USER_SCOPED_COLLECTIONS = [
     "memories", "goals", "reminders",
     "journal_entries", "health_logs",
     "transactions", "notifications",
-    "jobs", "career_profile",
+    "jobs", "career_profile", "career_applications",
     "knowledge_docs", "knowledge_chunks",
     "phone_calls", "incoming_calls", "missed_call_reminders",
     "digital_twin_profile", "user_settings",
     "login_sessions", "audit_events",
+    "suggestions",
 ]
 
 

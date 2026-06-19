@@ -1777,6 +1777,19 @@ async def get_finance_sync_status():
     return info or {"last_run_at": None, "last_scanned": 0, "last_new": 0}
 
 
+@api_router.get("/finance/transactions")
+async def list_finance_transactions(limit: int = 30, days: int = 90):
+    """Recent transactions (debit + credit) for the timeline view in Finance Brain."""
+    from datetime import timedelta as _td
+    since = (datetime.now(timezone.utc) - _td(days=days)).isoformat()
+    cur = db.transactions.find(
+        {"timestamp": {"$gte": since}},
+        {"_id": 0},
+    ).sort("timestamp", -1).limit(int(limit))
+    docs = await cur.to_list(length=limit)
+    return docs
+
+
 # ==================== PERSONAL DIGITAL TWIN ====================
 
 # Initialize digital twin
@@ -2312,6 +2325,176 @@ async def career_sync(auto_score: bool = True, max_per_board: int = 30):
 async def career_sync_status():
     info = await db.sync_state.find_one({"id": "career_boards"}, {"_id": 0})
     return info or {"last_run_at": None, "new_jobs": 0, "scored": 0}
+
+
+# ==================== RESUME UPLOAD & AUTO-APPLY ====================
+
+@api_router.post("/career/profile/parse-resume")
+async def career_parse_resume(file: UploadFile = File(...)):
+    """Accepts a resume (PDF / DOCX / TXT), extracts structured fields with
+    Bedrock and merges them into the user's career profile."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "Empty file")
+
+    # Extract text
+    name = file.filename or "resume"
+    lower = name.lower()
+    text = ""
+    try:
+        if lower.endswith(".pdf"):
+            from pypdf import PdfReader
+            import io as _io
+            reader = PdfReader(_io.BytesIO(raw))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages)
+        elif lower.endswith(".docx"):
+            import docx, io as _io
+            doc = docx.Document(_io.BytesIO(raw))
+            text = "\n".join(p.text for p in doc.paragraphs)
+        else:
+            text = raw.decode("utf-8", errors="ignore")
+    except Exception as e:
+        logger.warning("resume extract failed: %s", e)
+        text = raw.decode("utf-8", errors="ignore")
+    text = (text or "").strip()
+    if len(text) < 30:
+        raise HTTPException(400, "Couldn't read any text from that file. Try a different format.")
+
+    prompt = (
+        f"RESUME:\n{text[:12000]}"
+    )
+    system_msg = (
+        "You are a resume parser. Extract the following fields from the resume text and "
+        "return STRICT JSON only (no markdown, no commentary): "
+        "name, email, phone, headline, summary, location, years_experience (integer), "
+        "skills (array of strings), certifications (array of strings), "
+        "experience (array of {title, company, start, end, bullets:[string]}), "
+        "education (array of {school, degree, year}), "
+        "links (object: {linkedin, github, portfolio}). "
+        "Use empty string/array if a field is missing. Do not invent values."
+    )
+    raw_json = await _bedrock_converse(
+        [{"role": "user", "content": [{"text": prompt}]}],
+        system_msg,
+        max_tokens=2400,
+        temperature=0.2,
+    )
+    parsed = career_mod._safe_json_object(raw_json)
+    if not parsed:
+        raise HTTPException(502, "Couldn't parse the resume — try a cleaner copy")
+
+    # Clean + coerce
+    def _slist(v):
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return []
+
+    updates = {
+        "name": str(parsed.get("name", "") or "").strip(),
+        "email": str(parsed.get("email", "") or "").strip(),
+        "phone": str(parsed.get("phone", "") or "").strip(),
+        "headline": str(parsed.get("headline", "") or "").strip(),
+        "summary": str(parsed.get("summary", "") or "").strip(),
+        "location": str(parsed.get("location", "") or "").strip(),
+        "years_experience": int(parsed.get("years_experience") or 0),
+        "skills": _slist(parsed.get("skills")),
+        "certifications": _slist(parsed.get("certifications")),
+        "experience": parsed.get("experience") if isinstance(parsed.get("experience"), list) else [],
+        "education": parsed.get("education") if isinstance(parsed.get("education"), list) else [],
+        "links": parsed.get("links") if isinstance(parsed.get("links"), dict) else {},
+        "resume_filename": name,
+        "resume_uploaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Strip empty strings so we don't blank out previously-saved values.
+    updates = {k: v for k, v in updates.items() if v not in ("", None, [], {})}
+    profile = await career_mod.update_profile(db, updates)
+    return {"profile": profile, "extracted_fields": list(updates.keys())}
+
+
+class AutoApplyToggle(BaseModel):
+    enabled: bool
+    min_score: Optional[int] = 75
+
+
+@api_router.put("/career/profile/auto-apply")
+async def career_auto_apply_toggle(body: AutoApplyToggle):
+    return await career_mod.update_profile(db, {
+        "auto_apply_enabled": bool(body.enabled),
+        "auto_apply_min_score": int(body.min_score or 75),
+    })
+
+
+@api_router.post("/career/jobs/{job_id}/apply")
+async def career_job_apply(job_id: str):
+    """One-click apply: marks the job as applied, generates a tailored resume
+    + cover letter, and (if the original posting has a URL) returns it so the
+    client can open it in a browser. The actual ATS submission is a stub for
+    LinkedIn-class portals — we provide everything the user needs to submit."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    twin = get_digital_twin()
+    style = await twin.get_style_prompt()
+    artifacts: Dict[str, Any] = {}
+    for kind in ("resume", "cover_letter"):
+        try:
+            a = await career_mod.generate_artifact(db, job_id, kind, _bedrock_converse, style_prompt=style)
+            artifacts[kind] = a
+        except Exception as e:
+            logger.warning("apply: %s gen failed: %s", kind, e)
+    app_doc = await career_mod.upsert_application(db, job_id, "applied", notes="One-click apply via ORA OS")
+    return {
+        "ok": True,
+        "application": app_doc,
+        "artifacts": artifacts,
+        "apply_url": job.get("source_url"),
+    }
+
+
+# ==================== USER SUGGESTIONS ====================
+
+class SuggestionCreate(BaseModel):
+    title: str
+    body: str
+    kind: str = "feature"  # 'feature' | 'improvement' | 'bug' | 'other'
+
+
+@api_router.post("/suggestions")
+async def suggestions_create(body: SuggestionCreate):
+    title = (body.title or "").strip()
+    text = (body.body or "").strip()
+    if not title or not text:
+        raise HTTPException(400, "Title and details are required")
+    kind = (body.kind or "feature").strip().lower()
+    if kind not in {"feature", "improvement", "bug", "other"}:
+        kind = "other"
+    doc = {
+        "id": str(uuid.uuid4()),
+        "title": title[:160],
+        "body": text[:4000],
+        "kind": kind,
+        "status": "received",
+        "upvotes": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.suggestions.insert_one(dict(doc))
+    return doc
+
+
+@api_router.get("/suggestions")
+async def suggestions_list(limit: int = 50):
+    docs = await db.suggestions.find({}, {"_id": 0}).sort("created_at", -1).to_list(length=limit)
+    return docs
+
+
+@api_router.delete("/suggestions/{sid}")
+async def suggestions_delete(sid: str):
+    r = await db.suggestions.delete_one({"id": sid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
 
 
 # ==================== AI COMPANION NUDGES ====================

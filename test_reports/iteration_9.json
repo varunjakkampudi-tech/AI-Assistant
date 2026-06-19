@@ -1,0 +1,45 @@
+{
+  "summary": "Iter-9 end-to-end test. Backend: 42/43 pytest cases pass — 31/31 in test_auth_v11.py still green, and 11/12 new iter-9 cases (test_iter9_endpoints.py) pass. One CRITICAL backend bug found: POST /api/career/jobs/{id}/apply queries db.jobs but jobs are stored in db.career_jobs, so the One-Click Apply feature ALWAYS returns 404 for valid jobs (verified by seeding a job via POST /api/career/jobs then immediately calling /apply). Other new endpoints verified working end-to-end against the preview URL: POST/GET/DELETE /api/suggestions (including kind normalization + validation), PUT /api/career/profile/auto-apply (toggle persists {auto_apply_enabled, auto_apply_min_score}), POST /api/career/profile/parse-resume (Bedrock returns name='Varun Iter9' and years_experience>=1 and skills array for a 14-line TXT resume, ~5s latency as noted), GET /api/finance/transactions?limit=5&days=90 returns array. Public regressions OK: /api/auth/otp/request still returns dev_code, /api/auth/apple/start still non-200 (stub). Frontend: sign-in screen renders correctly — 'Continue with Google' is the only active button; 'Sign in with Apple' and 'Sign in with Email' each show a SOON pill; tapping 'Sign in with Email' does NOT navigate to the OTP entry UI (signin-email-input element count = 0 after click — the email/code stages are unreachable from the UI as required). Protected UI flows (Home avatar pill / hamburger / ProfileSheet / MenuSheet / suggestions screen / finance colours / career resume+apply card) could NOT be exercised in Playwright because expo-secure-store rehydration on web reload kicks the user back to /sign-in (same issue documented in iter-8 context_for_next_testing_agent). Backend functionality + the locked-down sign-in screen behaviour are confirmed correct; protected pages need either a UI Google sign-in or the main agent's own self-test pass.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/career/jobs/{job_id}/apply", "issue": "Reads `db.jobs.find_one(...)` at server.py:2435 but jobs are stored in `db.career_jobs` (every other code path in career_mod uses career_jobs). Result: any valid job_id returns 404 'Job not found' — the brand-new One-Click Apply feature is broken end-to-end. Fix: change `db.jobs` to `db.career_jobs` on line 2435.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_v11.py",
+    "/app/backend/tests/test_iter9_endpoints.py",
+    "/app/test_reports/pytest/iter9_all.xml",
+    "/app/test_reports/pytest/test_auth_v11_iter9.xml",
+    "/app/test_reports/pytest/test_iter9.xml"
+  ],
+  "action_items": [
+    "FIX: server.py line 2435 — replace `await db.jobs.find_one(...)` with `await db.career_jobs.find_one(...)` so /api/career/jobs/{id}/apply can locate the seeded job. Without this, the new Discover-tab Apply button on each card will always show a generic failure.",
+    "(optional UX) The Sign-in-with-Email click handler should also fire a visible toast/alert on web — current build renders the SOON pill correctly and hides the OTP UI, but on Chromium web no JS alert dialog fired during the click (no `dialog` event captured). The non-reachability of the OTP UI is what the brief required, so this is not blocking — but worth verifying user-feedback intent."
+  ],
+  "critical_code_review_comments": [
+    "BUG (critical): /api/career/jobs/{id}/apply uses the wrong Mongo collection — `db.jobs` vs `db.career_jobs`. This is a one-line fix and is the only blocker in the iter-9 surface.",
+    "Resume parsing endpoint correctly strips empty values via `updates = {k:v for k,v in updates.items() if v not in ('', None, [], {})}` — good, prevents wiping previously-saved fields.",
+    "Suggestions are stored in a global `suggestions` collection (no user_id), so any signed-in user can read/delete any suggestion. Confirmed acceptable per brief but should be flagged for production multi-tenant.",
+    "backend/server.py is now 2835 lines (was 2600 in iter-8) — still growing, splitting into routers is still recommended.",
+    "OTP brute-force lockout still per-OTP-record (not per-email) — open security item carried over from iter 7 / iter 8."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter9_endpoints.py (new, 12 tests for the iter-9 surface)"
+  ],
+  "success_rate": {
+    "backend": "97.7% (42/43 — 31/31 auth_v11 + 11/12 iter9; the only failure is the db.jobs/db.career_jobs bug)",
+    "frontend": "Sign-in screen behaviours verified (SOON badges, Google active, Email click does not open OTP UI). Protected pages NOT exercised due to SecureStore rehydration on web reload — same blocker as iter-8."
+  },
+  "test_credentials": "Passwordless OTP via /api/auth/otp/request returning dev_code (DEV_OTP_RETURN_CODE=true, RESEND_API_KEY blank). Used emails test_iter9_*@oraos.app for backend tests, test_iter9_ui_*@oraos.app for the UI token-injection attempt.",
+  "seed_data_creation": "Backend tests create + delete suggestions and one career_job per run (best-effort cleanup). No stale data should remain in the global `suggestions` collection beyond the one orphan from the kind-normalization test, which is auto-cleaned.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend baseline + iter-9 suite: `pytest /app/backend/tests/test_auth_v11.py /app/backend/tests/test_iter9_endpoints.py -v` — should be 43/43 once the db.jobs->db.career_jobs typo on server.py:2435 is fixed. For UI tests of protected pages: localStorage injection of 'ora_access_token'/'ora_refresh_token' did NOT rehydrate the auth context on web (confirmed). The app's storage layer wraps values via `JSON.stringify(value)` in src/utils/storage/index.ts but the auth.tsx layer uses raw strings — there's inconsistency between the two storage shims, which makes pre-seeding from outside difficult. The most reliable route is to UI-sign-in via Google OAuth (currently the only active sign-in path) or temporarily re-enable email OTP UI behind a debug flag for testing. Once signed in, the testids to look for are: home-brand, home-avatar-button (LEFT), home-avatar-initial, home-menu-button (RIGHT), profile-card / profile-initial / profile-expo-qr / profile-settings / profile-security / profile-help / profile-suggest / profile-close, menu-backdrop / menu-briefing / menu-finance / menu-career, sugg-kind-feature / sugg-kind-improvement / sugg-kind-bug / sugg-kind-other / sugg-title / sugg-body / sugg-submit / sugg-item-<id>, career-resume-card / career-upload-resume / career-auto-apply-card / career-auto-apply-toggle / career-apply-<jobId>.",
+  "rca of the issue": "ROOT CAUSE — /api/career/jobs/{id}/apply (server.py line 2435) was written referencing `db.jobs` (likely a copy-paste from a generic CRUD scaffold) but every other code path that touches the career-jobs collection — list_jobs/create_job/score_job/generate_artifact/upsert_application — uses `db.career_jobs` (see backend/career.py and the surrounding /api/career/jobs/* handlers in server.py). Because the new One-Click Apply endpoint reads the wrong collection, `find_one(...)` returns None for every real job and the handler raises HTTP 404. REPRO: 1) POST /api/career/jobs with a valid payload to seed a job. 2) Note returned id. 3) POST /api/career/jobs/{id}/apply → 404 'Job not found'. MITIGATION: one-character fix — change `db.jobs.find_one({\"id\": job_id}, {\"_id\": 0})` to `db.career_jobs.find_one({\"id\": job_id}, {\"_id\": 0})` on server.py:2435. After the fix, re-run `pytest backend/tests/test_iter9_endpoints.py::TestCareerJobApply -v` to confirm 2/2 green."
+}
