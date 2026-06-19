@@ -124,18 +124,28 @@ def parse_upi_id(text: str) -> Optional[str]:
 def detect_transaction_direction(text: str) -> str:
     """Detect if transaction is debit (outgoing) or credit (incoming)."""
     text_lower = text.lower()
-    
-    debit_keywords = ["debited", "debit", "spent", "paid", "withdrawn", "purchase", "sent"]
-    credit_keywords = ["credited", "credit", "received", "deposited", "refund", "cashback"]
-    
-    for keyword in debit_keywords:
-        if keyword in text_lower:
+
+    # Strong debit indicators - these win over "credit card" mentions
+    strong_debit = [
+        "debited", "you spent", "you paid", "card was used", "card used",
+        "withdrawn", "purchase of", "transferred to", "sent to", "transaction of",
+        "was used for",
+    ]
+    for kw in strong_debit:
+        if kw in text_lower:
             return "debit"
-    
+
+    debit_keywords = ["debit", "spent", "paid", "purchase", "sent"]
+    credit_keywords = ["credited", "received from", "received rs", "received ₹", "received inr",
+                        "you received", "deposited", "refund", "cashback", "credited to"]
+
     for keyword in credit_keywords:
         if keyword in text_lower:
             return "credit"
-    
+    for keyword in debit_keywords:
+        if keyword in text_lower:
+            return "debit"
+
     return "unknown"
 
 
@@ -438,3 +448,182 @@ class PersonalFinanceBrain:
                         })
         
         return sorted(recurring, key=lambda x: x["amount"], reverse=True)
+
+
+
+# ==================== GMAIL TRANSACTION SCANNER ====================
+
+# Gmail search query for finance-related emails
+FINANCE_GMAIL_QUERY = (
+    '(debited OR credited OR "you paid" OR "you spent" OR "amount received" '
+    'OR "received from" OR "transferred to" OR UPI OR IMPS OR NEFT OR RTGS '
+    'OR "credit card" OR "debit card" OR "card was used" OR "transaction alert" '
+    'OR "spent on your" OR "has been credited" OR "has been debited" OR "payment of") '
+)
+
+# Senders that are known finance sources
+_FINANCE_SENDER_HINTS = (
+    "alerts@", "noreply@", "no-reply@", "statements@", "ealerts@",
+    "@hdfcbank", "@icicibank", "@axisbank", "@sbi.co.in", "@kotak", "@yesbank",
+    "@indusind", "@idfcfirstbank", "@rblbank", "@federalbank",
+    "@paytm", "@phonepe", "@gpay", "@cred", "@razorpay", "@billdesk", "@instamojo",
+    "@amazon", "@flipkart", "@swiggy", "@zomato", "@uber", "@ola", "@netflix",
+    "@americanexpress", "@aexp", "@onecard",
+)
+
+
+def _looks_like_finance_sender(sender: str) -> bool:
+    s = (sender or "").lower()
+    return any(hint in s for hint in _FINANCE_SENDER_HINTS)
+
+
+class GmailFinanceScanner:
+    """Scans Gmail for bank / UPI / credit-card emails and turns them into transactions."""
+
+    def __init__(self, db, brain: "PersonalFinanceBrain"):
+        self.db = db
+        self.brain = brain
+
+    async def scan(self, token: str, helper, days: int = 30, max_messages: int = 100) -> Dict[str, Any]:
+        """Scan recent Gmail for financial transactions.
+
+        - `helper`: the google_helper module (passed in to avoid circular import).
+        Returns {scanned, new_transactions, total_after_scan}.
+        """
+        query = f"{FINANCE_GMAIL_QUERY} newer_than:{max(1, int(days))}d"
+        try:
+            messages = await helper.search_messages_full(token, query, max_results=max_messages)
+        except Exception as e:
+            logger.warning(f"Gmail finance scan failed: {e}")
+            return {"scanned": 0, "new_transactions": 0, "error": str(e)[:200]}
+
+        new_count = 0
+        senders_seen = []
+        for m in messages:
+            mid = m.get("id")
+            if not mid:
+                continue
+            # Dedupe by gmail message id
+            already = await self.db.notifications.find_one({"gmail_msg_id": mid})
+            if already:
+                continue
+
+            sender = m.get("from", "")
+            subject = m.get("subject", "")
+            body = m.get("body", "") or m.get("snippet", "")
+            full_text = f"{subject}\n{body}"[:4000]
+
+            # Quick sanity: bail out if neither subject nor body has any money keyword
+            ftl = full_text.lower()
+            if not any(kw in ftl for kw in (
+                "debited", "credited", "₹", "rs.", "rs ", " inr", "spent", "paid",
+                "received", "transferred", "card was used", "amount", "txn", "transaction",
+                "purchase", "upi", "imps", "neft", "rtgs", "credit card", "debit card",
+            )):
+                continue
+
+            amount = parse_amount_from_text(full_text)
+            if amount is None or amount <= 0:
+                continue
+            direction = detect_transaction_direction(full_text)
+            upi_id = parse_upi_id(full_text)
+
+            # Merchant: try snippet/body patterns first, then sender domain
+            merchant = self._extract_merchant_from_email(full_text, upi_id, sender)
+            category = categorize_transaction(merchant, full_text)
+            source = self._detect_source_from_email(sender, full_text)
+
+            # Use the email's internal date if available
+            ts = m.get("internal_ts")
+            if ts:
+                try:
+                    posted_at = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+                except Exception:
+                    posted_at = datetime.now(timezone.utc).isoformat()
+            else:
+                posted_at = datetime.now(timezone.utc).isoformat()
+
+            doc = {
+                "id": str(uuid.uuid4()),
+                "kind": "transaction",
+                "amount": amount,
+                "direction": direction,
+                "category": category,
+                "merchant": merchant,
+                "upi_id": upi_id,
+                "source": source,
+                "currency": "INR",
+                "raw_text": (subject + " — " + body)[:500],
+                "posted_at": posted_at,
+                "gmail_msg_id": mid,
+                "gmail_from": sender,
+                "gmail_subject": subject,
+            }
+            await self.db.notifications.insert_one(doc)
+            new_count += 1
+            senders_seen.append(sender)
+
+        # Record sync metadata
+        await self.db.sync_state.update_one(
+            {"id": "finance_gmail"},
+            {"$set": {
+                "id": "finance_gmail",
+                "last_run_at": datetime.now(timezone.utc).isoformat(),
+                "last_scanned": len(messages),
+                "last_new": new_count,
+                "days": days,
+            }},
+            upsert=True,
+        )
+
+        total = await self.db.notifications.count_documents({"kind": "transaction"})
+        return {
+            "scanned": len(messages),
+            "new_transactions": new_count,
+            "total_after_scan": total,
+            "senders_seen": list(set(senders_seen))[:20],
+        }
+
+    @staticmethod
+    def _extract_merchant_from_email(text: str, upi_id: Optional[str], sender: str) -> str:
+        # 1) UPI ID -> handle name
+        if upi_id:
+            handle = upi_id.split("@")[0].replace(".", " ").replace("_", " ").strip()
+            if len(handle) > 2 and not handle.isdigit():
+                return handle.title()
+
+        # 2) Common email patterns
+        patterns = [
+            r"(?:at|to|in favor of|in favour of|towards)\s+([A-Z0-9][A-Za-z0-9 &.'-]{2,40}?)(?:\s+on|\s+for|\s+via|\s+ref|\s+vide|\.|$)",
+            r"(?:VPA|UPI ID)[^A-Za-z0-9]*([A-Za-z0-9.@_-]+)",
+            r"merchant\s*:?\s*([A-Z0-9][A-Za-z0-9 &.'-]{2,40})",
+        ]
+        for pat in patterns:
+            m = re.search(pat, text)
+            if m:
+                cand = m.group(1).strip().strip(".,;:")
+                if 2 < len(cand) < 60:
+                    return cand.title()
+
+        # 3) Fallback: sender domain
+        m = re.search(r"@([A-Za-z0-9.-]+)", sender or "")
+        if m:
+            dom = m.group(1).split(".")[0]
+            return dom.title()
+        return "Unknown"
+
+    @staticmethod
+    def _detect_source_from_email(sender: str, text: str) -> str:
+        combined = f"{sender} {text}".lower()
+        for bank, pattern in BANK_PATTERNS.items():
+            if re.search(pattern, combined, re.IGNORECASE):
+                return bank.upper()
+        # Try the sender domain itself
+        m = re.search(r"@([A-Za-z0-9.-]+)", sender or "")
+        if m:
+            return m.group(1).split(".")[0].upper()
+        return "BANK"
+
+
+async def get_last_sync(db) -> Optional[Dict[str, Any]]:
+    return await db.sync_state.find_one({"id": "finance_gmail"}, {"_id": 0})

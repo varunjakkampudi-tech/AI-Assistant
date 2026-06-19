@@ -86,17 +86,25 @@ export default function FinanceScreen() {
   const [txTitle, setTxTitle] = useState("");
   const [txText, setTxText] = useState("");
   const [adding, setAdding] = useState(false);
+  const [googleConnected, setGoogleConnected] = useState<boolean>(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{ last_run_at: string | null; last_scanned: number; last_new: number } | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [s, ins, rec] = await Promise.all([
+      const [s, ins, rec, gs, ss] = await Promise.all([
         api.financeSpendingSummary(days),
         api.financeInsights(days).catch(() => []),
         api.financeRecurring().catch(() => []),
+        api.googleStatus().catch(() => ({ connected: false })),
+        api.financeSyncStatus().catch(() => null),
       ]);
       setSummary(s);
       setInsights(Array.isArray(ins) ? ins : []);
       setRecurring(Array.isArray(rec) ? rec : []);
+      setGoogleConnected(!!gs?.connected);
+      setSyncStatus(ss as any);
     } catch (e) {
       console.warn("finance load failed", e);
     } finally {
@@ -116,6 +124,31 @@ export default function FinanceScreen() {
     setRefreshing(true);
     load();
   };
+
+  const runGmailSync = useCallback(async () => {
+    if (!googleConnected) {
+      Alert.alert(
+        "Connect Google first",
+        "Open the Daily Briefing screen and tap 'Connect Google' so Nova can read your bank emails.",
+      );
+      return;
+    }
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const r = await api.financeSyncGmail(90, 150);
+      setSyncMessage(
+        r.new_transactions > 0
+          ? `Found ${r.new_transactions} new transaction${r.new_transactions === 1 ? "" : "s"} (scanned ${r.scanned} emails).`
+          : `No new transactions found. Scanned ${r.scanned} emails.`,
+      );
+      await load();
+    } catch (e: any) {
+      setSyncMessage(`Sync failed: ${e?.message || e}`);
+    } finally {
+      setSyncing(false);
+    }
+  }, [googleConnected, load]);
 
   const submitTransaction = async () => {
     if (!txText.trim()) return;
@@ -158,18 +191,7 @@ export default function FinanceScreen() {
 
   return (
     <View style={styles.container}>
-      <ScreenHeader
-        title="Finance Brain"
-        rightSlot={
-          <Pressable
-            style={styles.headerBtn}
-            onPress={() => setShowAddModal(true)}
-            testID="finance-add-btn"
-          >
-            <Ionicons name="add" size={22} color={theme.color.onSurface} />
-          </Pressable>
-        }
-      />
+      <ScreenHeader title="Finance Brain" />
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={
@@ -177,6 +199,51 @@ export default function FinanceScreen() {
         }
         testID="finance-scroll"
       >
+        {/* Auto-sync banner */}
+        <View style={styles.syncBanner} testID="finance-sync-banner">
+          <View style={styles.syncRow}>
+            <Ionicons
+              name={googleConnected ? "mail-open-outline" : "link-outline"}
+              size={20}
+              color={googleConnected ? theme.color.brand : theme.color.onSurfaceSecondary}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.syncTitle}>
+                {googleConnected ? "Auto-tracking from Gmail" : "Connect Gmail to auto-track"}
+              </Text>
+              <Text style={styles.syncSub}>
+                {googleConnected
+                  ? syncStatus?.last_run_at
+                    ? `Last synced ${new Date(syncStatus.last_run_at).toLocaleString([], {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })} · ${syncStatus.last_new ?? 0} new`
+                    : "Tap 'Sync now' to pull bank, UPI & card emails."
+                  : "Open Daily Briefing → Connect Google. Nova will then auto-detect every payment."}
+              </Text>
+            </View>
+            <Pressable
+              style={[styles.syncBtn, !googleConnected && styles.syncBtnDisabled, syncing && { opacity: 0.6 }]}
+              onPress={runGmailSync}
+              disabled={syncing}
+              testID="finance-sync-now-btn"
+            >
+              {syncing ? (
+                <ActivityIndicator color={theme.color.onBrand} size="small" />
+              ) : (
+                <Text style={googleConnected ? styles.syncBtnText : styles.syncBtnTextDisabled}>
+                  Sync now
+                </Text>
+              )}
+            </Pressable>
+          </View>
+          {syncMessage && (
+            <Text style={styles.syncMessage} testID="finance-sync-message">
+              {syncMessage}
+            </Text>
+          )}
+        </View>
+
         {/* Range selector */}
         <View style={styles.rangeRow}>
           {ranges.map((r) => (
@@ -279,7 +346,9 @@ export default function FinanceScreen() {
             <Ionicons name="wallet-outline" size={32} color={theme.color.onSurfaceSecondary} />
             <Text style={styles.emptyTitle}>No spending data yet</Text>
             <Text style={styles.emptyText}>
-              Tap + to add a bank/UPI notification and Nova will categorize it automatically.
+              {googleConnected
+                ? "Tap 'Sync now' above and Nova will scan your Gmail for bank, UPI and credit-card emails."
+                : "Connect Google in the Daily Briefing screen and Nova will auto-detect every payment from your inbox."}
             </Text>
           </View>
         )}
@@ -420,6 +489,31 @@ const styles = StyleSheet.create({
   },
   loadingBox: { flex: 1, alignItems: "center", justifyContent: "center" },
   scroll: { padding: theme.spacing.lg, paddingBottom: theme.spacing.xxxl },
+  syncBanner: {
+    backgroundColor: theme.color.brandTertiary,
+    borderRadius: theme.radius.lg,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.brandSecondary,
+    gap: theme.spacing.sm,
+  },
+  syncRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
+  syncTitle: { color: theme.color.onSurface, fontSize: 14, fontWeight: "600" },
+  syncSub: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  syncBtn: {
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.color.brand,
+    minWidth: 84,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  syncBtnDisabled: { backgroundColor: theme.color.surfaceTertiary },
+  syncBtnText: { color: theme.color.onBrand, fontWeight: "600", fontSize: 12 },
+  syncBtnTextDisabled: { color: theme.color.onSurfaceSecondary, fontWeight: "600", fontSize: 12 },
+  syncMessage: { color: theme.color.onSurface, fontSize: 12, marginTop: 4 },
   rangeRow: { flexDirection: "row", gap: theme.spacing.sm, marginBottom: theme.spacing.lg },
   rangePill: {
     paddingHorizontal: theme.spacing.md,

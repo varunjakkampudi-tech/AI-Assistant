@@ -302,6 +302,17 @@ export const api = {
   financeInsights: (days = 30) => jfetch<any[]>(`/finance/insights?days=${days}`),
   financeCategories: (days = 30) => jfetch<any>(`/finance/categories?days=${days}`),
   financeRecurring: () => jfetch<any[]>("/finance/recurring"),
+  financeSyncGmail: (days = 30, max_messages = 100) =>
+    jfetch<{ scanned: number; new_transactions: number; total_after_scan: number; senders_seen?: string[]; error?: string }>(
+      `/finance/sync-gmail?days=${days}&max_messages=${max_messages}`,
+      { method: "POST" },
+    ),
+  financeSyncStatus: () =>
+    jfetch<{ last_run_at: string | null; last_scanned: number; last_new: number; days?: number }>(
+      "/finance/sync-status",
+    ),
+  googleStatus: () =>
+    jfetch<{ connected: boolean; email?: string | null }>("/google/status"),
 
   // ==================== PERSONAL DIGITAL TWIN ====================
 

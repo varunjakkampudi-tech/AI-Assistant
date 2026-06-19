@@ -163,6 +163,79 @@ async def list_recent_messages(token: str, max_results: int = 5) -> list[dict]:
         return out
 
 
+def _decode_part_body(data: str) -> str:
+    """Decode a base64url Gmail body."""
+    try:
+        # Gmail uses URL-safe base64 (no padding)
+        padded = data + "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(padded).decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def _extract_body_text(payload: dict) -> str:
+    """Walk the MIME tree and return decoded plain-text body."""
+    if not payload:
+        return ""
+    mime = payload.get("mimeType", "")
+    body = payload.get("body", {}) or {}
+    if mime.startswith("text/plain") and body.get("data"):
+        return _decode_part_body(body["data"])
+    # Recurse
+    for part in payload.get("parts", []) or []:
+        txt = _extract_body_text(part)
+        if txt:
+            return txt
+    # Fallback: text/html stripped
+    if mime.startswith("text/html") and body.get("data"):
+        html = _decode_part_body(body["data"])
+        import re as _re
+        return _re.sub(r"<[^>]+>", " ", html)
+    return ""
+
+
+async def search_messages_full(token: str, query: str, max_results: int = 50) -> list[dict]:
+    """Search Gmail with a Gmail query string and return full bodies.
+
+    Returns a list of dicts: {id, from, subject, date, snippet, body}.
+    """
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        r = await http.get(
+            f"{GMAIL_BASE}/messages",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"maxResults": max_results, "q": query},
+        )
+        if r.status_code != 200:
+            raise HTTPException(502, f"Gmail search failed: {r.text[:200]}")
+        ids = [m["id"] for m in r.json().get("messages", []) or []]
+        out: list[dict] = []
+        for mid in ids:
+            mr = await http.get(
+                f"{GMAIL_BASE}/messages/{mid}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"format": "full"},
+            )
+            if mr.status_code != 200:
+                continue
+            data = mr.json()
+            payload = data.get("payload", {}) or {}
+            headers = {h["name"]: h["value"] for h in payload.get("headers", []) or []}
+            body_text = _extract_body_text(payload)
+            out.append({
+                "id": mid,
+                "thread_id": data.get("threadId"),
+                "from": headers.get("From", ""),
+                "subject": headers.get("Subject", "(no subject)"),
+                "date": headers.get("Date", ""),
+                "internal_ts": int(data.get("internalDate", "0")) // 1000,
+                "snippet": data.get("snippet", ""),
+                "body": body_text or data.get("snippet", ""),
+            })
+        return out
+
+
+
+
 async def send_email(token: str, to: str, subject: str, body: str) -> dict:
     msg = EmailMessage()
     msg["To"] = to

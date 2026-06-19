@@ -459,6 +459,13 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
     # Auto-extract memories in background (don't block response)
     background.add_task(_extract_and_store_memories, body.session_id, body.message, reply)
 
+    # Auto-learn digital twin from this user message
+    try:
+        twin = get_digital_twin()
+        background.add_task(twin.learn_from_message, body.message, "chat")
+    except Exception as e:
+        logger.warning("Twin learn schedule failed: %s", e)
+
     return ChatResponse(session_id=body.session_id, user_message=user_msg, assistant_message=ai_msg)
 
 
@@ -704,6 +711,35 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
                 recent_emails = await gh.list_recent_messages(token, max_results=5)
             except Exception as e:
                 logger.warning("Gmail list failed: %s", e)
+            # Auto Gmail finance scan + frequent-contact learning (rate-limited to once per hour)
+            try:
+                last_sync = await fb.get_last_sync(db)
+                last_run = (last_sync or {}).get("last_run_at") or ""
+                should_run = True
+                if last_run:
+                    try:
+                        prev = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
+                        should_run = (datetime.now(timezone.utc) - prev).total_seconds() > 3600
+                    except Exception:
+                        should_run = True
+                if should_run:
+                    scanner = fb.GmailFinanceScanner(db, get_finance_brain())
+                    result = await scanner.scan(token, gh, days=30, max_messages=80)
+                    logger.info(
+                        "Auto Gmail finance scan: scanned=%s new=%s",
+                        result.get("scanned"), result.get("new_transactions"),
+                    )
+                    # Learn frequent contacts from senders we just touched
+                    twin = get_digital_twin()
+                    for sender in (result.get("senders_seen") or [])[:20]:
+                        name = _name_from_sender(sender)
+                        if name:
+                            try:
+                                await twin.learn_contact_interaction(name, "email")
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.warning("Auto Gmail finance scan failed: %s", e)
     except Exception as e:
         logger.warning("Google token check failed: %s", e)
 
@@ -761,6 +797,31 @@ def _safe_json_object(text: str) -> dict:
         return json.loads(m.group(0))
     except Exception:
         return {}
+
+
+def _name_from_sender(sender: str) -> Optional[str]:
+    """Extract a human-friendly name from a Gmail From header. Skips no-reply senders."""
+    if not sender:
+        return None
+    s = sender.strip()
+    low = s.lower()
+    if any(skip in low for skip in ("noreply", "no-reply", "donotreply", "do-not-reply", "alerts@", "notifications@", "support@", "auto-confirm")):
+        return None
+    # Try "Name <email>"
+    m = re.match(r"\s*\"?([^\"<]+?)\"?\s*<([^>]+)>", s)
+    if m:
+        name = m.group(1).strip()
+        if name and "@" not in name and len(name) > 1:
+            return name
+        s = m.group(2)
+    # Use the local part of the email
+    if "@" in s:
+        local = s.split("@")[0]
+        # Skip very short or numeric usernames
+        if len(local) < 2 or local.isdigit():
+            return None
+        return local.replace(".", " ").replace("_", " ").replace("-", " ").title()
+    return None
 
 
 async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Optional[str]]:
@@ -1653,6 +1714,33 @@ async def get_recurring_transactions():
     """Detect recurring transactions (subscriptions, EMIs)."""
     brain = get_finance_brain()
     return await brain.get_recurring_transactions()
+
+
+@api_router.post("/finance/sync-gmail")
+async def sync_gmail_transactions(days: int = 30, max_messages: int = 100):
+    """Scan Gmail for bank / UPI / credit-card emails and auto-create transactions."""
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected. Connect Google in the briefing screen first.")
+    scanner = fb.GmailFinanceScanner(db, get_finance_brain())
+    result = await scanner.scan(token, gh, days=days, max_messages=max_messages)
+    # Learn frequent contacts from senders we just saw
+    twin = get_digital_twin()
+    for sender in (result.get("senders_seen") or [])[:30]:
+        name = _name_from_sender(sender)
+        if name:
+            try:
+                await twin.learn_contact_interaction(name, "email")
+            except Exception:
+                pass
+    return result
+
+
+@api_router.get("/finance/sync-status")
+async def get_finance_sync_status():
+    """Last Gmail finance sync metadata."""
+    info = await fb.get_last_sync(db)
+    return info or {"last_run_at": None, "last_scanned": 0, "last_new": 0}
 
 
 # ==================== PERSONAL DIGITAL TWIN ====================
