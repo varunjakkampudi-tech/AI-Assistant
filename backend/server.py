@@ -11,7 +11,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Dict
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import httpx
 
 from emergentintegrations.llm.openai.speech_to_text import OpenAISpeechToText
@@ -28,6 +28,10 @@ import digital_twin as dt
 import chief_of_staff as cos
 import unified_search as us
 import life_os as lifeos
+import timeline as tl
+import journal as journal_mod
+import knowledge_graph as kg
+import health as health_mod
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -1943,6 +1947,240 @@ async def life_recommendations(max_items: int = 5):
 async def life_dashboard():
     """One-shot endpoint returning scores + recommendations."""
     return await get_life_os().get_dashboard()
+
+
+# ==================== LIFE OS TIMELINE ====================
+
+@api_router.get("/timeline")
+async def timeline_for_date(date: Optional[str] = None, tz_offset: int = 0):
+    """Aggregated event timeline for a given local date (YYYY-MM-DD). Defaults to today."""
+    if not date:
+        date = (datetime.now(timezone.utc) + timedelta(minutes=tz_offset)).date().isoformat()
+    token = None
+    try:
+        token = await gh.get_valid_token(db)
+    except Exception:
+        pass
+    return await tl.build_day_timeline(db, date, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token)
+
+
+@api_router.get("/timeline/on-this-day")
+async def timeline_on_this_day(months_back: int = 12, tz_offset: int = 0):
+    """Memory Time Machine: what happened today X months ago."""
+    token = None
+    try:
+        token = await gh.get_valid_token(db)
+    except Exception:
+        pass
+    return await tl.on_this_day(db, months_back=months_back, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token)
+
+
+@api_router.get("/timeline/range")
+async def timeline_range(from_: str, to_: str, tz_offset: int = 0):
+    """Aggregate totals for a date range (e.g. all of March)."""
+    return await tl.range_summary(db, from_date=from_, to_date=to_, tz_offset_minutes=tz_offset)
+
+
+# ==================== AI JOURNAL ====================
+
+@api_router.post("/journal/generate")
+async def generate_journal(date: Optional[str] = None, tz_offset: int = 0, overwrite: bool = True):
+    """Generate the journal for a given date (default: today)."""
+    if not date:
+        date = (datetime.now(timezone.utc) + timedelta(minutes=tz_offset)).date().isoformat()
+    token = None
+    try:
+        token = await gh.get_valid_token(db)
+    except Exception:
+        pass
+    timeline = await tl.build_day_timeline(db, date, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token)
+    twin = get_digital_twin()
+    style = await twin.get_style_prompt()
+    entry = await journal_mod.generate_journal_for_date(
+        db, date, timeline, style, _bedrock_converse, overwrite=overwrite,
+    )
+    return entry
+
+
+@api_router.get("/journal")
+async def list_journals(limit: int = 60):
+    """List journal entries (most recent first)."""
+    return await journal_mod.list_journal_entries(db, limit=limit)
+
+
+@api_router.get("/journal/{date}")
+async def get_journal_entry(date: str):
+    entry = await journal_mod.get_journal(db, date)
+    if not entry:
+        raise HTTPException(404, f"No journal for {date}. POST /api/journal/generate to create one.")
+    return entry
+
+
+# ==================== PERSONAL KNOWLEDGE GRAPH ====================
+
+@api_router.get("/graph")
+async def get_knowledge_graph():
+    """Full personal knowledge graph (nodes + edges)."""
+    return await kg.build_graph(db)
+
+
+@api_router.get("/graph/related")
+async def graph_related(q: str, depth: int = 1):
+    """Sub-graph centred around a search query (e.g. 'AWS')."""
+    return await kg.related_to(db, q, depth=depth)
+
+
+# ==================== HEALTH INTELLIGENCE ====================
+
+class HealthLogRequest(BaseModel):
+    metric: str
+    value: float
+    note: Optional[str] = ""
+    logged_at: Optional[str] = None
+
+
+@api_router.post("/health/log")
+async def health_log(body: HealthLogRequest):
+    """Log a health metric (sleep_hours, water_glasses, workout_minutes, steps, weight_kg, mood, calories)."""
+    try:
+        doc = await health_mod.log_metric(db, body.metric, body.value, body.note, body.logged_at)
+        return doc
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@api_router.get("/health/logs")
+async def health_logs(metric: Optional[str] = None, days: int = 30):
+    return await health_mod.list_logs(db, metric=metric, days=days)
+
+
+@api_router.delete("/health/logs/{log_id}")
+async def health_delete(log_id: str):
+    ok = await health_mod.delete_log(db, log_id)
+    if not ok:
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@api_router.get("/health/summary")
+async def health_summary(days: int = 30):
+    """Per-metric trends + cross-metric insights + streaks."""
+    return await health_mod.summarize(db, days=days)
+
+
+@api_router.get("/health/metrics")
+async def health_metrics():
+    """List supported metrics + units."""
+    return {"metrics": health_mod.SUPPORTED_METRICS}
+
+
+# ==================== FAMILY HUB ====================
+
+@api_router.get("/family")
+async def family_hub():
+    """Family / relationships view: people (relationship != 'colleague'), upcoming birthdays/anniversaries from memories."""
+    profile = await db.user_profile.find_one({"id": "user_profile"}, {"_id": 0}) or {}
+    contacts = profile.get("frequent_contacts") or []
+    family_terms = {"mother", "mom", "father", "dad", "sister", "brother",
+                    "wife", "husband", "partner", "girlfriend", "boyfriend",
+                    "daughter", "son", "aunt", "uncle", "cousin", "grandma",
+                    "grandpa", "family", "spouse", "parent", "kid", "child"}
+    family = []
+    for c in contacts:
+        rel = (c.get("relationship") or "").lower()
+        name_l = (c.get("name") or "").lower()
+        if any(t in rel for t in family_terms) or any(t in name_l for t in family_terms):
+            family.append(c)
+
+    # Anniversaries / birthdays from memories (category in {date, person, preference})
+    birthdays = []
+    async for m in db.memories.find(
+        {"category": {"$in": ["date", "person", "preference"]}}, {"_id": 0},
+    ):
+        text = ((m.get("content") or "") + " " + (m.get("subject") or "")).lower()
+        if any(kw in text for kw in ("birthday", "anniversary", "appointment", "due date", "wedding")):
+            birthdays.append({
+                "subject": m.get("subject"),
+                "content": m.get("content"),
+                "category": m.get("category"),
+                "importance": m.get("importance", 3),
+            })
+
+    return {
+        "family_members": family,
+        "important_dates": birthdays[:30],
+        "all_contacts_count": len(contacts),
+    }
+
+
+# ==================== AI COMPANION NUDGES ====================
+
+@api_router.get("/companion/nudges")
+async def companion_nudges():
+    """Habit-aware proactive suggestions (gym streak, sleep, goals, finance)."""
+    nudges: List[Dict[str, Any]] = []
+
+    # Health insights
+    try:
+        hs = await health_mod.summarize(db, days=14)
+        for ins in hs.get("insights", []):
+            nudges.append({
+                "icon": ins.get("icon"),
+                "priority": ins.get("priority"),
+                "title": ins.get("message"),
+                "detail": ins.get("detail"),
+                "source": "health",
+            })
+    except Exception:
+        pass
+
+    # Goal at 0 progress for >7 days
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    async for g in db.goals.find(
+        {"status": "active", "progress": {"$lt": 10}, "created_at": {"$lt": cutoff}},
+        {"_id": 0},
+    ):
+        nudges.append({
+            "icon": "alert-circle",
+            "priority": "medium",
+            "title": f"Goal stuck: {g.get('title')}",
+            "detail": "It's been a week with little movement. Pick one tiny step today.",
+            "source": "goal",
+            "ref_id": g.get("id"),
+        })
+
+    # Finance: high single-day spend
+    today_iso = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    spent_today = 0.0
+    async for n in db.notifications.find(
+        {"kind": "transaction", "direction": "debit", "posted_at": {"$gte": today_iso}},
+        {"_id": 0, "amount": 1},
+    ):
+        spent_today += (n.get("amount") or 0)
+    if spent_today >= 3000:
+        nudges.append({
+            "icon": "card",
+            "priority": "low",
+            "title": f"Spent ₹{int(spent_today):,} in the last 24h",
+            "detail": "Tap Finance to see categories.",
+            "source": "finance",
+        })
+
+    # Memory Time Machine surfacing
+    try:
+        on_day = await tl.on_this_day(db, months_back=12, tz_offset_minutes=0, google_helper=gh, google_token=None)
+        if on_day.get("events"):
+            nudges.append({
+                "icon": "time",
+                "priority": "low",
+                "title": f"On this day a year ago — {len(on_day['events'])} events",
+                "detail": "Open the Timeline to revisit.",
+                "source": "timetravel",
+            })
+    except Exception:
+        pass
+
+    return nudges
 
 
 @api_router.get("/expo-go", response_class=HTMLResponse)

@@ -68,18 +68,21 @@ export default function ChiefScreen() {
   const router = useRouter();
   const [briefing, setBriefing] = useState<ChiefBriefing | null>(null);
   const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [nudges, setNudges] = useState<Array<{ icon: string; priority: string; title: string; detail?: string; source: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const tz_offset = Math.round(-new Date().getTimezoneOffset() / 60);
-      const [b, s] = await Promise.all([
+      const [b, s, n] = await Promise.all([
         api.chiefMorningBriefing(tz_offset),
         api.chiefSuggestions().catch(() => []),
+        api.companionNudges().catch(() => []),
       ]);
       setBriefing(b);
       setSuggestions(Array.isArray(s) ? s : []);
+      setNudges(Array.isArray(n) ? n : []);
     } catch (e) {
       console.warn("chief load failed", e);
     } finally {
@@ -166,6 +169,30 @@ export default function ChiefScreen() {
               <View key={idx} style={styles.suggestionCard} testID={`chief-suggestion-${idx}`}>
                 <Ionicons name="bulb-outline" size={18} color={theme.color.brand} />
                 <Text style={styles.suggestionText}>{s.text}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Companion nudges (habit-aware) */}
+        {nudges.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Nova nudges</Text>
+            {nudges.map((n, idx) => (
+              <View
+                key={idx}
+                style={[
+                  styles.suggestionCard,
+                  n.priority === "high" && { borderLeftWidth: 3, borderLeftColor: "#ef4444" },
+                  n.priority === "low" && { borderLeftWidth: 3, borderLeftColor: "#22c55e" },
+                ]}
+                testID={`chief-nudge-${idx}`}
+              >
+                <Ionicons name={(n.icon as any) || "sparkles"} size={18} color={theme.color.brand} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.suggestionText}>{n.title}</Text>
+                  {!!n.detail && <Text style={[styles.suggestionText, { fontSize: 11, color: theme.color.onSurfaceSecondary, marginTop: 2 }]}>{n.detail}</Text>}
+                </View>
               </View>
             ))}
           </View>
@@ -380,6 +407,7 @@ const styles = StyleSheet.create({
   heroGreeting: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 28 },
   heroSub: { color: theme.color.onSurfaceSecondary, fontSize: 13, marginTop: 4 },
   section: { marginBottom: theme.spacing.xl },
+  sectionLabel: { color: theme.color.onSurfaceSecondary, fontSize: 11, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: theme.spacing.sm },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",

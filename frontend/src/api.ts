@@ -366,4 +366,44 @@ export const api = {
   lifeRecommendations: (max_items = 5) =>
     jfetch<any[]>(`/life/recommendations?max_items=${max_items}`),
   lifeDashboard: () => jfetch<any>("/life/dashboard"),
+
+  // ==================== TIMELINE & TIME MACHINE ====================
+  timeline: (date?: string, tz_offset = 0) =>
+    jfetch<any>(`/timeline${date ? `?date=${date}&tz_offset=${tz_offset}` : `?tz_offset=${tz_offset}`}`),
+  timelineOnThisDay: (months_back = 12, tz_offset = 0) =>
+    jfetch<any>(`/timeline/on-this-day?months_back=${months_back}&tz_offset=${tz_offset}`),
+  timelineRange: (from: string, to: string, tz_offset = 0) =>
+    jfetch<any>(`/timeline/range?from_=${from}&to_=${to}&tz_offset=${tz_offset}`),
+
+  // ==================== AI JOURNAL ====================
+  journalGenerate: (date?: string, tz_offset = 0, overwrite = true) =>
+    jfetch<any>(
+      `/journal/generate${date ? `?date=${date}&overwrite=${overwrite}&tz_offset=${tz_offset}` : `?overwrite=${overwrite}&tz_offset=${tz_offset}`}`,
+      { method: "POST" },
+    ),
+  journalList: (limit = 60) => jfetch<any[]>(`/journal?limit=${limit}`),
+  journalGet: (date: string) => jfetch<any>(`/journal/${date}`),
+
+  // ==================== KNOWLEDGE GRAPH ====================
+  graph: () => jfetch<any>("/graph"),
+  graphRelated: (q: string, depth = 1) =>
+    jfetch<any>(`/graph/related?q=${encodeURIComponent(q)}&depth=${depth}`),
+
+  // ==================== HEALTH ====================
+  healthMetrics: () => jfetch<{ metrics: Record<string, string> }>("/health/metrics"),
+  healthLog: (metric: string, value: number, note = "") =>
+    jfetch<any>("/health/log", {
+      method: "POST",
+      body: JSON.stringify({ metric, value, note }),
+    }),
+  healthLogs: (metric?: string, days = 30) =>
+    jfetch<any[]>(`/health/logs?days=${days}${metric ? `&metric=${metric}` : ""}`),
+  healthSummary: (days = 30) => jfetch<any>(`/health/summary?days=${days}`),
+  healthDeleteLog: (id: string) => jfetch<{ ok: boolean }>(`/health/logs/${id}`, { method: "DELETE" }),
+
+  // ==================== FAMILY HUB ====================
+  family: () => jfetch<any>("/family"),
+
+  // ==================== COMPANION NUDGES ====================
+  companionNudges: () => jfetch<any[]>("/companion/nudges"),
 };
