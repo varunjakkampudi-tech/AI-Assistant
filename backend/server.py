@@ -33,6 +33,7 @@ import journal as journal_mod
 import knowledge_graph as kg
 import health as health_mod
 import career as career_mod
+import auth as auth_mod
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -1057,7 +1058,8 @@ async def google_disconnect():
 
 
 @api_router.get("/google/callback")
-async def google_callback(code: Optional[str] = None, error: Optional[str] = None):
+async def google_callback(code: Optional[str] = None, error: Optional[str] = None,
+                          state: Optional[str] = None):
     if error:
         return HTMLResponse(f"<h2>Google sign-in failed</h2><p>{error}</p>", status_code=400)
     if not code:
@@ -1085,6 +1087,31 @@ async def google_callback(code: Optional[str] = None, error: Optional[str] = Non
     if refresh:
         set_doc["refresh_token"] = refresh
     await db.integrations.update_one({"id": "google"}, {"$set": set_doc}, upsert=True)
+
+    # Login-handoff path: state starts with "login:<nonce>"
+    if state and state.startswith("login:") and info.get("email"):
+        nonce = state.split(":", 1)[1]
+        try:
+            user = await auth_mod.upsert_oauth_user(
+                db, email=info["email"],
+                name=info.get("name") or "",
+                picture=info.get("picture") or "",
+                provider="google",
+            )
+            await auth_mod.finalize_handoff(db, nonce, user)
+            return HTMLResponse(
+                """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                <div style="text-align:center;padding:32px;">
+                  <div style="font-size:48px;color:#E1B168;">&#10003;</div>
+                  <h2 style="font-weight:400;">Signed in to Nova</h2>
+                  <p style="color:#B4B4B8;">You can close this tab and return to the app.</p>
+                  <script>setTimeout(function(){window.close()},1200);</script>
+                </div></body></html>"""
+            )
+        except Exception as e:
+            logger.warning("Login handoff failed: %s", e)
+            return HTMLResponse(f"<h2>Login failed</h2><pre>{e}</pre>", status_code=500)
+
     return HTMLResponse(
         """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
         <div style="text-align:center;padding:32px;">
@@ -2465,6 +2492,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _on_startup():
+    try:
+        await auth_mod.ensure_indexes(db)
+        await auth_mod.seed_admin(db)
+    except Exception as e:
+        logger.warning("Auth startup hook failed: %s", e)
 
 
 @app.on_event("shutdown")
