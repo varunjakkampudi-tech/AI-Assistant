@@ -5,7 +5,7 @@ User provided GitHub repo https://github.com/varunjakkampudi-tech/AI-Assistant (
 
 ## Credentials shared by user
 - Google OAuth Client ID: 625072821412-oecv3ar7t07ep574itg8sebr0erh193c.apps.googleusercontent.com
-- Google Redirect URI: https://ai-chat-mobile-64.preview.emergentagent.com/api/google/callback (locked to a different preview domain — only /auth-url verified here)
+- Google Redirect URI: https://mobile-app-demo-31.preview.emergentagent.com/api/google/callback (locked to a different preview domain — only /auth-url verified here)
 - AWS Bedrock bearer token (Amazon Nova Lite)
 - ElevenLabs API key + voice_id Lr9nbI5Ax5lDTEobjoXE
 
