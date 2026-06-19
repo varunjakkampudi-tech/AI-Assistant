@@ -62,10 +62,17 @@ export interface Reminder {
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 
+// Auth token holder — set from AuthProvider so every API call can attach it.
+let _accessToken: string | null = null;
+export function setApiToken(t: string | null) { _accessToken = t; }
+export function getApiToken(): string | null { return _accessToken; }
+
 async function jfetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: any = { "Content-Type": "application/json", ...(init?.headers || {}) };
+  if (_accessToken) headers.Authorization = `Bearer ${_accessToken}`;
   const res = await fetch(`${BASE}/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -109,7 +116,9 @@ export const api = {
     const form = new FormData();
     // @ts-ignore RN FormData accepts this shape
     form.append("file", { uri, name: "audio.m4a", type: "audio/m4a" });
-    const res = await fetch(`${BASE}/api/transcribe`, { method: "POST", body: form as any });
+    const headers: any = {};
+    if (_accessToken) headers.Authorization = `Bearer ${_accessToken}`;
+    const res = await fetch(`${BASE}/api/transcribe`, { method: "POST", body: form as any, headers });
     if (!res.ok) throw new Error(`Transcribe ${res.status}: ${await res.text()}`);
     const data = await res.json();
     return (data?.text || "").trim();

@@ -74,13 +74,15 @@ def create_access_token(user_id: str, email: str) -> str:
     return jwt.encode(payload, _secret(), algorithm=JWT_ALG)
 
 
-def create_refresh_token(user_id: str) -> str:
+def create_refresh_token(user_id: str, jti: Optional[str] = None) -> tuple[str, str]:
+    jti = jti or uuid.uuid4().hex
     payload = {
         "sub": user_id,
+        "jti": jti,
         "type": "refresh",
         "exp": _now() + timedelta(days=REFRESH_TTL_DAYS),
     }
-    return jwt.encode(payload, _secret(), algorithm=JWT_ALG)
+    return jwt.encode(payload, _secret(), algorithm=JWT_ALG), jti
 
 
 def decode_token(token: str, expected_type: str) -> Dict[str, Any]:
@@ -106,9 +108,7 @@ def _sanitize(user: Dict[str, Any]) -> Dict[str, Any]:
 
 async def ensure_indexes(db) -> None:
     await db.users.create_index("email", unique=True)
-    await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.login_attempts.create_index("identifier")
-    await db.auth_handoff.create_index("expires_at", expireAfterSeconds=0)
     await db.auth_handoff.create_index("nonce", unique=True)
 
 
@@ -228,9 +228,11 @@ async def optional_user(request: Request, db) -> Optional[Dict[str, Any]]:
 # ==================== Token bundle ====================
 
 def issue_tokens(user: Dict[str, Any]) -> Dict[str, str]:
+    refresh, jti = create_refresh_token(user["id"])
     return {
         "access_token": create_access_token(user["id"], user["email"]),
-        "refresh_token": create_refresh_token(user["id"]),
+        "refresh_token": refresh,
+        "refresh_jti": jti,
         "token_type": "bearer",
     }
 

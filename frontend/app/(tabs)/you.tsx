@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -6,97 +6,61 @@ import {
   ScrollView,
   Pressable,
   Linking,
-  Alert,
-  Platform,
+  Image as RNImage,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import * as WebBrowser from "expo-web-browser";
 import { LinearGradient } from "expo-linear-gradient";
 
 import { theme } from "@/src/theme";
+import { useAuth, authedFetch } from "@/src/auth";
 import { api } from "@/src/api";
 
-interface Section {
-  label: string;
-  items: ItemConfig[];
-}
 interface ItemConfig {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   sub?: string;
   route?: string;
-  action?: () => void;
-  color?: string;
   testID: string;
 }
 
 export default function YouScreen() {
   const router = useRouter();
-  const [profile, setProfile] = useState<{ email: string; name: string; picture?: string } | null>(null);
-  const [googleConnected, setGoogleConnected] = useState(false);
-  const [stats, setStats] = useState<{ messages: number; memories: number; sessions: number } | null>(null);
+  const { user, accessToken, signOut } = useAuth();
+  const [stats, setStats] = useState<{ memories: number; sessions: number; activeSessions: number } | null>(null);
+  const [expoInfo, setExpoInfo] = useState<{ qr_image_url: string; preview_url: string; expo_go_ios: string; expo_go_android: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [me, gs, mems, sess] = await Promise.all([
-        api.me().catch(() => null),
-        api.googleStatus().catch(() => ({ connected: false })),
+      const [mems, sess, secSess] = await Promise.all([
         api.listMemories().catch(() => []),
         api.listSessions().catch(() => []),
+        authedFetch("/api/security/sessions", accessToken).then((r) => r.ok ? r.json() : { sessions: [] }),
       ]);
-      setProfile(me as any);
-      setGoogleConnected(!!gs?.connected);
       setStats({
-        messages: 0,
         memories: (mems as any[]).length,
         sessions: (sess as any[]).length,
+        activeSessions: (secSess.sessions || []).length,
       });
-    } catch {
-      // soft fail
-    }
-  }, []);
+    } catch { /* soft fail */ }
+    try {
+      const r = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/api/expo-qr`);
+      if (r.ok) setExpoInfo(await r.json());
+    } catch { /* ignore */ }
+  }, [accessToken]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const connectGoogle = useCallback(async () => {
-    try {
-      const base = process.env.EXPO_PUBLIC_BACKEND_URL;
-      const res = await fetch(`${base}/api/google/auth-url`);
-      const data = await res.json();
-      if (!data?.url) return;
-      if (Platform.OS === "web") {
-        Linking.openURL(data.url);
-      } else {
-        await WebBrowser.openAuthSessionAsync(data.url, `${base}/api/google/callback`);
-      }
-      setTimeout(() => load(), 1200);
-    } catch (e: any) {
-      Alert.alert("Connect failed", e?.message || "");
-    }
-  }, [load]);
-
-  const disconnectGoogle = useCallback(async () => {
-    Alert.alert("Disconnect Google?", "ORA will lose access to your inbox & calendar.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Disconnect",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const base = process.env.EXPO_PUBLIC_BACKEND_URL;
-            await fetch(`${base}/api/google/disconnect`, { method: "POST" });
-            load();
-          } catch (e: any) {
-            Alert.alert("Failed", e?.message || "");
-          }
-        },
-      },
-    ]);
-  }, [load]);
-
-  const sections: Section[] = [
+  const sections: { label: string; items: ItemConfig[] }[] = [
+    {
+      label: "ACCOUNT",
+      items: [
+        { icon: "settings-outline", label: "Settings", sub: "Theme, privacy, cookies, notifications", route: "/settings", testID: "you-settings" },
+        { icon: "shield-checkmark-outline", label: "Security Center", sub: "Sessions, audit log, breach alerts", route: "/security", testID: "you-security" },
+        { icon: "help-circle-outline", label: "Help & Support", sub: "FAQ, contact, report a bug", route: "/help", testID: "you-help" },
+      ],
+    },
     {
       label: "EXPLORE",
       items: [
@@ -111,17 +75,12 @@ export default function YouScreen() {
     {
       label: "AI POWER TOOLS",
       items: [
-        { icon: "rocket-outline", label: "Chief of Staff", sub: "Daily prioritization", route: "/chief", testID: "you-chief" },
-        { icon: "pulse-outline", label: "Life OS", sub: "Holistic life dashboard", route: "/life", testID: "you-life" },
-        { icon: "journal-outline", label: "AI Journal", sub: "Auto-generated daily entries", route: "/journal", testID: "you-journal" },
+        { icon: "rocket-outline", label: "Chief of Staff", route: "/chief", testID: "you-chief" },
+        { icon: "pulse-outline", label: "Life OS", route: "/life", testID: "you-life" },
+        { icon: "journal-outline", label: "AI Journal", route: "/journal", testID: "you-journal" },
         { icon: "search-outline", label: "Search Everything", route: "/search", testID: "you-search" },
         { icon: "git-network-outline", label: "Knowledge Graph", route: "/graph", testID: "you-graph" },
-        { icon: "library-outline", label: "Knowledge Vault", sub: "Documents & RAG", route: "/knowledge", testID: "you-knowledge" },
-      ],
-    },
-    {
-      label: "MORE",
-      items: [
+        { icon: "library-outline", label: "Knowledge Vault", route: "/knowledge", testID: "you-knowledge" },
         { icon: "people-outline", label: "Family Hub", route: "/family", testID: "you-family" },
         { icon: "person-circle-outline", label: "Digital Twin", route: "/twin", testID: "you-twin" },
         { icon: "call-outline", label: "AI Calls", route: "/calls", testID: "you-calls" },
@@ -142,36 +101,25 @@ export default function YouScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Profile card */}
         <View style={styles.profileCard} testID="you-profile-card">
-          <LinearGradient
-            colors={[theme.color.brandSecondary, theme.color.brand]}
-            style={styles.profileAvatar}
-          >
+          <LinearGradient colors={[theme.color.brandSecondary, theme.color.brand]} style={styles.profileAvatar}>
             <Text style={styles.profileInitial}>
-              {(profile?.name || "U").charAt(0).toUpperCase()}
+              {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
             </Text>
           </LinearGradient>
           <View style={{ flex: 1 }}>
-            <Text style={styles.profileName}>
-              {profile?.name || "Welcome to ORA OS"}
-            </Text>
-            <Text style={styles.profileEmail} numberOfLines={1}>
-              {profile?.email || "Connect Google to personalize"}
+            <Text style={styles.profileName}>{user?.name || "ORA member"}</Text>
+            <Text style={styles.profileEmail} numberOfLines={1}>{user?.email || "—"}</Text>
+            <Text style={styles.providerTag}>
+              <Ionicons
+                name={user?.provider === "google" ? "logo-google" : user?.provider === "apple" ? "logo-apple" : "mail"}
+                size={10}
+                color={theme.color.brand}
+              /> {user?.provider === "email_otp" ? "Email OTP" : (user?.provider || "—")}
             </Text>
           </View>
-          {googleConnected ? (
-            <View style={styles.connectedDot}>
-              <Ionicons name="checkmark-circle" size={20} color={theme.color.success} />
-            </View>
-          ) : (
-            <Pressable
-              style={styles.connectBtn}
-              onPress={connectGoogle}
-              testID="you-connect-google"
-            >
-              <Ionicons name="logo-google" size={14} color={theme.color.onBrand} />
-              <Text style={styles.connectText}>Connect</Text>
-            </Pressable>
-          )}
+          <Pressable style={styles.signoutBtn} onPress={signOut} testID="you-signout">
+            <Ionicons name="log-out-outline" size={18} color={theme.color.onSurfaceSecondary} />
+          </Pressable>
         </View>
 
         {/* Stats */}
@@ -186,10 +134,32 @@ export default function YouScreen() {
               <Text style={styles.statLbl}>Conversations</Text>
             </View>
             <View style={styles.statBox}>
-              <Text style={styles.statVal}>
-                <Ionicons name="sparkles" size={18} color={theme.color.brand} />
-              </Text>
-              <Text style={styles.statLbl}>ORA OS v1.0</Text>
+              <Text style={styles.statVal}>{stats.activeSessions}</Text>
+              <Text style={styles.statLbl}>Devices</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Expo QR card */}
+        {expoInfo && (
+          <View style={styles.expoCard} testID="expo-qr-card">
+            <View style={styles.expoLeft}>
+              <Text style={styles.expoLabel}>OPEN ON PHONE</Text>
+              <Text style={styles.expoTitle}>Scan with Expo Go</Text>
+              <Text style={styles.expoSub}>Install Expo Go, then point your camera here.</Text>
+              <View style={styles.expoBtns}>
+                <Pressable style={styles.expoBtn} onPress={() => Linking.openURL(expoInfo.expo_go_ios)} testID="expo-go-ios">
+                  <Ionicons name="logo-apple" size={12} color={theme.color.brand} />
+                  <Text style={styles.expoBtnText}>iOS</Text>
+                </Pressable>
+                <Pressable style={styles.expoBtn} onPress={() => Linking.openURL(expoInfo.expo_go_android)} testID="expo-go-android">
+                  <Ionicons name="logo-android" size={12} color={theme.color.brand} />
+                  <Text style={styles.expoBtnText}>Android</Text>
+                </Pressable>
+              </View>
+            </View>
+            <View style={styles.qrFrame}>
+              <RNImage source={{ uri: expoInfo.qr_image_url }} style={styles.qrImage} resizeMode="contain" />
             </View>
           </View>
         )}
@@ -202,18 +172,12 @@ export default function YouScreen() {
               {sec.items.map((it, idx) => (
                 <Pressable
                   key={it.label}
-                  style={[
-                    styles.row,
-                    idx < sec.items.length - 1 && styles.rowDivider,
-                  ]}
-                  onPress={() => {
-                    if (it.action) it.action();
-                    else if (it.route) router.push(it.route as any);
-                  }}
+                  style={[styles.row, idx < sec.items.length - 1 && styles.rowDivider]}
+                  onPress={() => it.route && router.push(it.route as any)}
                   testID={it.testID}
                 >
                   <View style={styles.rowIcon}>
-                    <Ionicons name={it.icon} size={18} color={it.color || theme.color.brand} />
+                    <Ionicons name={it.icon} size={18} color={theme.color.brand} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowLabel}>{it.label}</Text>
@@ -226,39 +190,9 @@ export default function YouScreen() {
           </View>
         ))}
 
-        {/* Account actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>ACCOUNT</Text>
-          <View style={styles.sectionCard}>
-            {googleConnected && (
-              <Pressable
-                style={[styles.row, styles.rowDivider]}
-                onPress={disconnectGoogle}
-                testID="you-disconnect-google"
-              >
-                <View style={styles.rowIcon}>
-                  <Ionicons name="log-out-outline" size={18} color={theme.color.error} />
-                </View>
-                <Text style={[styles.rowLabel, { color: theme.color.error }]}>Disconnect Google</Text>
-              </Pressable>
-            )}
-            <View style={styles.row}>
-              <View style={styles.rowIcon}>
-                <Ionicons name="information-circle-outline" size={18} color={theme.color.onSurfaceSecondary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rowLabel}>About</Text>
-                <Text style={styles.rowSub}>ORA OS · Version 1.0.0</Text>
-              </View>
-            </View>
-          </View>
-        </View>
+        <Text style={styles.tagline}>ORA OS · v1.0.0 · Your AI Operating System for life.</Text>
 
-        <Text style={styles.tagline}>
-          ORA — Your AI Operating System for life.
-        </Text>
-
-        <View style={{ height: 100 }} />
+        <View style={{ height: 120 }} />
       </ScrollView>
     </View>
   );
@@ -266,109 +200,66 @@ export default function YouScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
-  header: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.sm,
-  },
-  headerTitle: {
-    color: theme.color.onSurface,
-    fontFamily: theme.font.display,
-    fontSize: 26,
-    letterSpacing: -0.3,
-  },
+  header: { paddingHorizontal: theme.spacing.lg, paddingVertical: theme.spacing.sm },
+  headerTitle: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 26, letterSpacing: -0.3 },
   scroll: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.sm },
   profileCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing.md,
-    backgroundColor: theme.color.surfaceSecondary,
-    borderRadius: theme.radius.lg,
+    flexDirection: "row", alignItems: "center", gap: theme.spacing.md,
+    backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
   },
-  profileAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  profileInitial: {
-    color: theme.color.onBrand,
-    fontFamily: theme.font.display,
-    fontSize: 24,
-  },
+  profileAvatar: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
+  profileInitial: { color: theme.color.onBrand, fontFamily: theme.font.display, fontSize: 24 },
   profileName: { color: theme.color.onSurface, fontSize: 16, fontWeight: "600" },
   profileEmail: { color: theme.color.onSurfaceSecondary, fontSize: 12, marginTop: 2 },
-  connectBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: theme.color.brand,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: theme.radius.pill,
-  },
-  connectText: { color: theme.color.onBrand, fontSize: 12, fontWeight: "700" },
-  connectedDot: { padding: 4 },
-  statsRow: {
-    flexDirection: "row",
-    gap: theme.spacing.sm,
-    marginTop: theme.spacing.md,
-  },
+  providerTag: { color: theme.color.brand, fontSize: 10, marginTop: 4, letterSpacing: 1 },
+  signoutBtn: { padding: 8 },
+  statsRow: { flexDirection: "row", gap: theme.spacing.sm, marginTop: theme.spacing.md },
   statBox: {
-    flex: 1,
-    backgroundColor: theme.color.surfaceSecondary,
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.md,
-    alignItems: "center",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    flex: 1, backgroundColor: theme.color.surfaceSecondary,
+    borderRadius: theme.radius.md, padding: theme.spacing.md,
+    alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
   },
   statVal: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 22 },
   statLbl: { color: theme.color.onSurfaceSecondary, fontSize: 10, marginTop: 4, letterSpacing: 0.8 },
-  section: { marginTop: theme.spacing.xl },
-  sectionLabel: {
-    color: theme.color.onSurfaceSecondary,
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 1.8,
-    marginBottom: theme.spacing.sm,
+  expoCard: {
+    flexDirection: "row", gap: theme.spacing.md, marginTop: theme.spacing.md,
+    backgroundColor: theme.color.brandTertiary, borderRadius: theme.radius.lg,
+    padding: theme.spacing.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.brandSecondary,
+    alignItems: "center",
   },
+  expoLeft: { flex: 1, gap: 4 },
+  expoLabel: { color: theme.color.brand, fontSize: 9, fontWeight: "700", letterSpacing: 1.8 },
+  expoTitle: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 18 },
+  expoSub: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  expoBtns: { flexDirection: "row", gap: 6, marginTop: 6 },
+  expoBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: theme.color.surfaceSecondary,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+  },
+  expoBtnText: { color: theme.color.brand, fontSize: 11, fontWeight: "600" },
+  qrFrame: {
+    width: 92, height: 92, borderRadius: theme.radius.md,
+    backgroundColor: "#fff",
+    padding: 4, alignItems: "center", justifyContent: "center",
+  },
+  qrImage: { width: "100%", height: "100%" },
+  section: { marginTop: theme.spacing.xl },
+  sectionLabel: { color: theme.color.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginBottom: theme.spacing.sm },
   sectionCard: {
     backgroundColor: theme.color.surfaceSecondary,
     borderRadius: theme.radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
     overflow: "hidden",
   },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing.md,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
-  },
-  rowDivider: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.color.divider,
-  },
-  rowIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: theme.color.brandTertiary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  row: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.md },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.divider },
+  rowIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTertiary, alignItems: "center", justifyContent: "center" },
   rowLabel: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500" },
   rowSub: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
-  tagline: {
-    color: theme.color.onSurfaceSecondary,
-    fontSize: 12,
-    textAlign: "center",
-    marginTop: theme.spacing.xl,
-    fontStyle: "italic",
-  },
+  tagline: { color: theme.color.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: theme.spacing.xl, fontStyle: "italic" },
 });

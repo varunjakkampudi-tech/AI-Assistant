@@ -1,0 +1,36 @@
+{
+  "summary": "ORA OS v1.1 auth-gated backend tested end-to-end via new pytest file test_auth_v11.py. All 31 tests pass (100%) covering: whitelist (root, legal x3, expo-qr + png, otp/request, support/faq), protected gating (briefing/sessions/memories/auth-me all 401 without Bearer), email OTP request/verify with dev_code, OTP lockout after 5 wrong attempts, /auth/me, /auth/refresh, /auth/logout revoking session (refresh after logout = 401 'Session revoked'), /auth/logout-all revoking both sessions, Apple stub 501, Google handoff scaffolding, settings default+update+invalid-theme noop, security/sessions list+revoke+revoke-all, audit log including login.email_otp, account export+delete (post-delete /auth/me=401), support/contact authed, support/faq>=4 items, branding /api/ shows 'ORA OS API', /api/briefing returns 200 with token. Old test_ora_os_api.py is intentionally stale (no Bearer) — not retested.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/otp/request -> /api/auth/otp/verify",
+        "issue": "OTP lockout can be bypassed by requesting a fresh OTP. store_otp() deletes the previous unused record (security.py:55) so a new record starts with attempts=0. After 5 wrong attempts an attacker can simply call /auth/otp/request again and keep brute-forcing. Recommend tracking failed-attempt counter per-email (not per-code) and applying a cooldown that survives new OTP requests."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_auth_v11.py",
+    "/app/test_reports/pytest/test_auth_v11.xml"
+  ],
+  "action_items": [
+    "Consider hardening OTP lockout so requesting a new code does NOT reset the failed-attempt counter for that email (current behaviour allows infinite retries in batches of 5).",
+    "Old /app/backend/tests/test_ora_os_api.py is stale — endpoints now require Bearer. Either drop it or refactor with a signed-in fixture."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2603 lines — should be split into routers/modules (>700 line threshold).",
+    "auth_gate middleware decodes the access token AND every protected route re-decodes via require_user/current_user — minor duplication, fine for now.",
+    "OTP lockout logic is per-OTP-record rather than per-email — security concern noted above.",
+    "auth_routes.support_contact builds a SUPPORT_INBOX from APP_PUBLIC_URL string-stripping — fragile; prefer an explicit SUPPORT_INBOX env var.",
+    "Account export loops over ~22 collections with .to_list(50000) per collection — could be slow / memory heavy for large accounts; consider streaming or chunked export.",
+    "Some user-scoped collections are listed but may not actually be scoped by user_id (e.g. integrations); double-check before scaling."
+  ],
+  "updated_files": ["/app/backend/tests/test_auth_v11.py"],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "Passwordless OTP — DEV_OTP_RETURN_CODE=true returns the OTP in /api/auth/otp/request response. Test emails generated as test_auth_<uuid>@oraos.app and cleaned up via /api/account/delete after each test.",
+  "seed_data_creation": "Each test creates an ephemeral user via OTP and deletes it through /api/account/delete in fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend is now Bearer-token gated. Use the helper functions _request_otp/_verify_otp/_signin in test_auth_v11.py — they handle the dev_code flow. PUBLIC_PATH_PREFIXES (/api/, /api/auth/, /api/legal/, /api/google/callback, /api/expo-qr, /api/install, /api/support/faq, /docs) bypass the gate. The old test_ora_os_api.py is stale — convert it by adding a signed_in fixture if needed. RESEND_API_KEY is intentionally blank (dev fallback). Apple = 501 (stub). Google /start returns 200 with nonce+url (configured)."
+}

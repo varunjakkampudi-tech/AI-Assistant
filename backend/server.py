@@ -34,6 +34,8 @@ import knowledge_graph as kg
 import health as health_mod
 import career as career_mod
 import auth as auth_mod
+import auth_routes as auth_routes_mod
+import security as security_mod
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -2484,6 +2486,97 @@ async def expo_go_page():
 
 
 app.include_router(api_router)
+app.include_router(auth_routes_mod.router, prefix="/api")
+
+
+@app.get("/api/expo-qr")
+async def expo_qr():
+    """Returns metadata for the Expo Go install card shown on the You tab."""
+    base = os.environ.get("APP_PUBLIC_URL", "")
+    return {
+        "app_name": os.environ.get("APP_NAME", "ORA OS"),
+        "preview_url": base,
+        "expo_go_ios": "https://apps.apple.com/app/expo-go/id982107779",
+        "expo_go_android": "https://play.google.com/store/apps/details?id=host.exp.exponent",
+        "qr_image_url": f"{base}/api/expo-qr/png",
+        "instructions": [
+            "Install Expo Go from the App Store / Play Store.",
+            "Scan the QR with the Expo Go app (Android) or your phone's Camera (iOS).",
+            "ORA OS opens directly inside Expo Go.",
+        ],
+    }
+
+
+@app.get("/api/expo-qr/png")
+async def expo_qr_png():
+    """Generates a QR code PNG pointing to the preview URL (cheap, on-the-fly)."""
+    from fastapi.responses import Response
+    import io
+    base = os.environ.get("APP_PUBLIC_URL", "https://oraos.app")
+    try:
+        import qrcode
+        img = qrcode.make(base)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+    except ImportError:
+        # Fallback: redirect to a public QR generator (free, no API key)
+        return RedirectResponse(
+            f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&bgcolor=0a0a0c&color=E1B168&data={base}"
+        )
+
+
+# expose db to dependency-based routes
+app.state.db = db
+
+# Public endpoints that do NOT require a Bearer token.
+PUBLIC_PATH_PREFIXES = (
+    "/api/",                       # exact root only — see _is_public below
+    "/api/auth/",
+    "/api/legal/",
+    "/api/google/callback",
+    "/api/expo-qr",
+    "/api/install",
+    "/api/support/faq",
+    "/docs", "/openapi.json", "/redoc",
+)
+
+
+def _is_public(path: str) -> bool:
+    # Root /api/ is public, deeper /api/foo paths fall through to whitelist check.
+    if path in ("/api", "/api/", "/", ""):
+        return True
+    for p in PUBLIC_PATH_PREFIXES:
+        if p != "/api/" and path.startswith(p):
+            return True
+    return False
+
+
+@app.middleware("http")
+async def auth_gate(request, call_next):
+    path = request.url.path
+    # Only gate /api/* — let static / docs / non-api paths through
+    if not path.startswith("/api"):
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if _is_public(path):
+        return await call_next(request)
+    # Require a Bearer token
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    try:
+        token = auth_header[7:].strip()
+        payload = auth_mod.decode_token(token, "access")
+        request.state.user_id = payload.get("sub")
+        request.state.user_email = payload.get("email")
+    except HTTPException as e:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": e.detail}, status_code=e.status_code)
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -2498,6 +2591,7 @@ app.add_middleware(
 async def _on_startup():
     try:
         await auth_mod.ensure_indexes(db)
+        await security_mod.ensure_indexes(db)
         await auth_mod.seed_admin(db)
     except Exception as e:
         logger.warning("Auth startup hook failed: %s", e)
