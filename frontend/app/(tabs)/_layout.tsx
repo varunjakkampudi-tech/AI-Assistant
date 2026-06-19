@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Tabs } from "expo-router";
 import { View, Text, Pressable, StyleSheet, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -6,7 +6,7 @@ import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 
-import { theme } from "@/src/theme";
+import { useAuth, useColors } from "@/src/auth";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -26,13 +26,16 @@ const TABS: TabConfig[] = [
   { name: "you", label: "You", icon: "person-outline", iconFocused: "person", testID: "tab-you" },
 ];
 
-function CustomTabBar({ state, descriptors, navigation }: any) {
+function CustomTabBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
   const bottomPad = Math.max(insets.bottom, 10);
+  const c = useColors();
+  const { effectiveTheme } = useAuth();
+  const styles = useMemo(() => makeStyles(c, effectiveTheme), [c, effectiveTheme]);
 
   return (
     <View style={[styles.bar, { paddingBottom: bottomPad }]} testID="bottom-tab-bar">
-      <BlurView intensity={70} tint="dark" style={StyleSheet.absoluteFill} />
+      <BlurView intensity={70} tint={effectiveTheme === "light" ? "light" : "dark"} style={StyleSheet.absoluteFill} />
       <View style={styles.barInner}>
         {state.routes.map((route: any, index: number) => {
           const config = TABS.find((t) => t.name === route.name);
@@ -64,7 +67,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
                 <View style={styles.askGlowOuter} />
                 <View style={styles.askGlowMid} />
                 <View style={styles.askButton}>
-                  <Ionicons name="sparkles" size={22} color={theme.color.onBrand} />
+                  <Ionicons name="sparkles" size={22} color={c.onBrand} />
                 </View>
                 <Text style={styles.askLabel}>{config.label}</Text>
               </Pressable>
@@ -83,12 +86,12 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
               <Ionicons
                 name={isFocused ? config.iconFocused : config.icon}
                 size={22}
-                color={isFocused ? theme.color.brand : theme.color.onSurfaceSecondary}
+                color={isFocused ? c.brand : c.onSurfaceSecondary}
               />
               <Text
                 style={[
                   styles.tabLabel,
-                  { color: isFocused ? theme.color.brand : theme.color.onSurfaceSecondary },
+                  { color: isFocused ? c.brand : c.onSurfaceSecondary },
                 ]}
               >
                 {config.label}
@@ -102,11 +105,12 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
 }
 
 export default function TabsLayout() {
+  const c = useColors();
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        sceneStyle: { backgroundColor: theme.color.surface },
+        sceneStyle: { backgroundColor: c.surface },
       }}
       tabBar={(props) => <CustomTabBar {...props} />}
     >
@@ -119,15 +123,17 @@ export default function TabsLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (c: ReturnType<typeof useColors>, mode: "light" | "dark") => StyleSheet.create({
   bar: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: Platform.OS === "android" ? "rgba(12,12,14,0.92)" : "rgba(12,12,14,0.55)",
+    backgroundColor: mode === "light"
+      ? (Platform.OS === "android" ? "rgba(250,248,244,0.94)" : "rgba(250,248,244,0.7)")
+      : (Platform.OS === "android" ? "rgba(12,12,14,0.92)" : "rgba(12,12,14,0.55)"),
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.color.border,
+    borderTopColor: c.border,
   },
   barInner: {
     flexDirection: "row",
@@ -162,7 +168,7 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: theme.color.brand,
+    backgroundColor: c.brand,
     opacity: 0.16,
   },
   askGlowMid: {
@@ -171,17 +177,17 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: theme.color.brand,
+    backgroundColor: c.brand,
     opacity: 0.22,
   },
   askButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: theme.color.brand,
+    backgroundColor: c.brand,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: theme.color.brand,
+    shadowColor: c.brand,
     shadowOpacity: 0.7,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 0 },
@@ -190,7 +196,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 220, 160, 0.4)",
   },
   askLabel: {
-    color: theme.color.brand,
+    color: c.brand,
     fontSize: 10,
     fontWeight: "600",
     marginTop: 4,

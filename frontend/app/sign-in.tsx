@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -16,13 +16,15 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
 import { theme } from "@/src/theme";
-import { useAuth } from "@/src/auth";
+import { useAuth, useColors } from "@/src/auth";
 import VoiceOrb from "@/src/components/VoiceOrb";
 
 type Stage = "method" | "email" | "code";
 
 export default function SignInScreen() {
   const auth = useAuth();
+  const c = useColors();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const [stage, setStage] = useState<Stage>("method");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -94,7 +96,7 @@ export default function SignInScreen() {
           <View style={styles.orbWrap}>
             <VoiceOrb active size={120} />
           </View>
-          <Text style={styles.brand}>ORA</Text>
+          <Text style={styles.brand}>ORA OS</Text>
           <Text style={styles.tagline}>Your AI Operating System for Life</Text>
         </View>
 
@@ -114,7 +116,7 @@ export default function SignInScreen() {
               ) : (
                 <>
                   <Ionicons name="logo-google" size={18} color="#1a1104" />
-                  <Text style={styles.bigBtnText}>Continue with Google</Text>
+                  <Text style={[styles.bigBtnText, { color: "#1a1104" }]}>Continue with Google</Text>
                 </>
               )}
             </Pressable>
@@ -124,8 +126,8 @@ export default function SignInScreen() {
               onPress={onApple}
               testID="signin-apple-btn"
             >
-              <Ionicons name="logo-apple" size={18} color="#F7F7F8" />
-              <Text style={[styles.bigBtnText, { color: "#F7F7F8" }]}>Sign in with Apple</Text>
+              <Ionicons name="logo-apple" size={18} color={c.onSurface} />
+              <Text style={[styles.bigBtnText, { color: c.onSurface }]}>Sign in with Apple</Text>
               <View style={styles.comingPill}>
                 <Text style={styles.comingText}>SOON</Text>
               </View>
@@ -136,8 +138,8 @@ export default function SignInScreen() {
               onPress={onEmail}
               testID="signin-email-btn"
             >
-              <Ionicons name="mail" size={18} color={theme.color.brand} />
-              <Text style={[styles.bigBtnText, { color: theme.color.brand }]}>Sign in with Email</Text>
+              <Ionicons name="mail" size={18} color={c.brand} />
+              <Text style={[styles.bigBtnText, { color: c.brand }]}>Sign in with Email</Text>
             </Pressable>
 
             <Text style={styles.legalText}>
@@ -157,7 +159,7 @@ export default function SignInScreen() {
         {stage === "email" && (
           <View style={styles.methodWrap}>
             <Pressable onPress={() => setStage("method")} hitSlop={10} style={styles.backLink}>
-              <Ionicons name="chevron-back" size={16} color={theme.color.onSurfaceSecondary} />
+              <Ionicons name="chevron-back" size={16} color={c.onSurfaceSecondary} />
               <Text style={styles.backLinkText}>Back</Text>
             </Pressable>
             <Text style={styles.welcome}>Your email</Text>
@@ -167,7 +169,7 @@ export default function SignInScreen() {
               value={email}
               onChangeText={setEmail}
               placeholder="you@email.com"
-              placeholderTextColor={theme.color.onSurfaceSecondary}
+              placeholderTextColor={c.onSurfaceSecondary}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
@@ -180,7 +182,7 @@ export default function SignInScreen() {
               disabled={busy}
               testID="signin-send-code-btn"
             >
-              {busy ? <ActivityIndicator color={theme.color.onBrand} /> : <Text style={styles.primaryBtnText}>Send code</Text>}
+              {busy ? <ActivityIndicator color={c.onBrand} /> : <Text style={styles.primaryBtnText}>Send code</Text>}
             </Pressable>
           </View>
         )}
@@ -188,14 +190,14 @@ export default function SignInScreen() {
         {stage === "code" && (
           <View style={styles.methodWrap}>
             <Pressable onPress={() => setStage("email")} hitSlop={10} style={styles.backLink}>
-              <Ionicons name="chevron-back" size={16} color={theme.color.onSurfaceSecondary} />
+              <Ionicons name="chevron-back" size={16} color={c.onSurfaceSecondary} />
               <Text style={styles.backLinkText}>Change email</Text>
             </Pressable>
             <Text style={styles.welcome}>Enter code</Text>
-            <Text style={styles.subWelcome}>Code sent to <Text style={{ color: theme.color.onSurface }}>{email}</Text></Text>
+            <Text style={styles.subWelcome}>Code sent to <Text style={{ color: c.onSurface }}>{email}</Text></Text>
             {devHint && (
               <View style={styles.devHint}>
-                <Ionicons name="construct-outline" size={14} color={theme.color.brand} />
+                <Ionicons name="construct-outline" size={14} color={c.brand} />
                 <Text style={styles.devHintText}>{devHint}</Text>
               </View>
             )}
@@ -204,7 +206,7 @@ export default function SignInScreen() {
               value={code}
               onChangeText={(t) => setCode(t.replace(/[^0-9]/g, "").slice(0, 6))}
               placeholder="------"
-              placeholderTextColor="#444448"
+              placeholderTextColor={c.onSurfaceSecondary}
               keyboardType="number-pad"
               autoFocus
               testID="signin-code-input"
@@ -215,7 +217,7 @@ export default function SignInScreen() {
               disabled={busy}
               testID="signin-verify-btn"
             >
-              {busy ? <ActivityIndicator color={theme.color.onBrand} /> : <Text style={styles.primaryBtnText}>Verify &amp; sign in</Text>}
+              {busy ? <ActivityIndicator color={c.onBrand} /> : <Text style={styles.primaryBtnText}>Verify &amp; sign in</Text>}
             </Pressable>
             <Pressable onPress={sendCode} disabled={busy} testID="signin-resend-btn">
               <Text style={styles.linkBtn}>Resend code</Text>
@@ -234,16 +236,16 @@ export default function SignInScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.color.surface },
+const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.surface },
   content: { flexGrow: 1, paddingHorizontal: theme.spacing.lg, paddingVertical: 48, gap: 32 },
   hero: { alignItems: "center", marginTop: 24 },
   orbWrap: { marginBottom: 12 },
-  brand: { color: theme.color.brand, fontFamily: theme.font.display, fontSize: 44, letterSpacing: 6 },
-  tagline: { color: theme.color.onSurfaceSecondary, fontSize: 13, marginTop: 4, letterSpacing: 0.5 },
+  brand: { color: c.brand, fontFamily: theme.font.display, fontSize: 40, letterSpacing: 6 },
+  tagline: { color: c.onSurfaceSecondary, fontSize: 13, marginTop: 4, letterSpacing: 0.5 },
   methodWrap: { gap: theme.spacing.md },
-  welcome: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 30, letterSpacing: -0.5, marginTop: 12 },
-  subWelcome: { color: theme.color.onSurfaceSecondary, fontSize: 14, marginBottom: theme.spacing.md },
+  welcome: { color: c.onSurface, fontFamily: theme.font.display, fontSize: 30, letterSpacing: -0.5, marginTop: 12 },
+  subWelcome: { color: c.onSurfaceSecondary, fontSize: 14, marginBottom: theme.spacing.md },
   bigBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -255,40 +257,40 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   bigBtnText: { fontSize: 15, fontWeight: "600" },
-  googleBtn: { backgroundColor: "#fff", borderColor: "#fff" },
-  appleBtn: { backgroundColor: theme.color.surfaceSecondary, borderColor: theme.color.borderStrong },
-  emailBtn: { backgroundColor: theme.color.brandTertiary, borderColor: theme.color.brandSecondary },
-  comingPill: { backgroundColor: theme.color.surfaceTertiary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: theme.radius.pill },
-  comingText: { color: theme.color.onSurfaceSecondary, fontSize: 9, fontWeight: "700", letterSpacing: 1 },
-  legalText: { color: theme.color.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: theme.spacing.md, lineHeight: 18 },
-  legalLink: { color: theme.color.brand, textDecorationLine: "underline" },
+  googleBtn: { backgroundColor: "#fff", borderColor: "#E5E5E5" },
+  appleBtn: { backgroundColor: c.surfaceSecondary, borderColor: c.borderStrong },
+  emailBtn: { backgroundColor: c.brandTertiary, borderColor: c.brandSecondary },
+  comingPill: { backgroundColor: c.surfaceTertiary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: theme.radius.pill },
+  comingText: { color: c.onSurfaceSecondary, fontSize: 9, fontWeight: "700", letterSpacing: 1 },
+  legalText: { color: c.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: theme.spacing.md, lineHeight: 18 },
+  legalLink: { color: c.brand, textDecorationLine: "underline" },
   input: {
-    backgroundColor: theme.color.surfaceSecondary,
-    color: theme.color.onSurface,
+    backgroundColor: c.surfaceSecondary,
+    color: c.onSurface,
     fontSize: 16,
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: 14,
     borderRadius: theme.radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.borderStrong,
+    borderColor: c.borderStrong,
   },
   codeInput: { fontFamily: theme.font.display, fontSize: 30, letterSpacing: 16, textAlign: "center", paddingVertical: 18 },
   primaryBtn: {
-    backgroundColor: theme.color.brand,
+    backgroundColor: c.brand,
     paddingVertical: 16,
     borderRadius: theme.radius.pill,
     alignItems: "center",
   },
-  primaryBtnText: { color: theme.color.onBrand, fontSize: 15, fontWeight: "700" },
-  linkBtn: { color: theme.color.brand, textAlign: "center", marginTop: theme.spacing.md, fontSize: 13 },
+  primaryBtnText: { color: c.onBrand, fontSize: 15, fontWeight: "700" },
+  linkBtn: { color: c.brand, textAlign: "center", marginTop: theme.spacing.md, fontSize: 13 },
   backLink: { flexDirection: "row", alignItems: "center", gap: 4 },
-  backLinkText: { color: theme.color.onSurfaceSecondary, fontSize: 13 },
+  backLinkText: { color: c.onSurfaceSecondary, fontSize: 13 },
   devHint: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: theme.color.brandTertiary, paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: theme.radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.brandSecondary,
+    backgroundColor: c.brandTertiary, paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: theme.radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: c.brandSecondary,
   },
-  devHintText: { color: theme.color.brand, fontSize: 12, fontWeight: "600" },
+  devHintText: { color: c.brand, fontSize: 12, fontWeight: "600" },
   errorBox: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "rgba(139,58,58,0.85)",

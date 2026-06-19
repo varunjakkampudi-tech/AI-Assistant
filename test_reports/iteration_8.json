@@ -1,0 +1,29 @@
+{
+  "summary": "Iter-8 end-to-end test of ORA OS after .env restore + Expo tunnel fix + useColors() theme hook. Backend: all 31 tests in /app/backend/tests/test_auth_v11.py still pass (100%). /api/ returns 'ORA OS API'. /api/expo-qr returns app_name='ORA OS', expo_url='exp://waopz68-anonymous-3000.exp.direct' (begins with exp://), qr_image_url; /api/expo-qr/png returns content-type image/png (200) and verified PNG signature. /api/support/faq returns >=4 items. Frontend (Expo Web at preview URL): Email OTP flow verified end-to-end with dev_code (multiple unique emails, e.g. test_iter8c@oraos.app -> code 604879 -> verify -> lands on Home at '/'). Home tab shows centred 'ORA OS' wordmark (data-testid=home-brand resolves to text 'ORA OS') and avatar pill (home-avatar-button) with home-avatar-initial='T' (uppercase first letter of email). Theme toggle in Settings -> Appearance is fully reactive: theme-light repaints UI to warm off-white background, theme-dark repaints to dark, theme-system follows OS preference (verified via screenshots). Security Center renders for signed-in user with active session row, per-session revoke button (data-testid=revoke-<uuid>), security-signout-all button, and audit log entry for 'Email sign-in'. You tab exposes you-settings, you-security, you-help, you-signout, plus an Expo QR card showing the live tunnel QR. Static /app/frontend/expo-go-qr.png exists and has valid PNG header bytes (690 bytes). Apple SOON badge present (501 by design, as noted in mocked APIs). No regressions detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings", "issues": ["Initial render of Settings opens with light theme because the default settings value is 'system' and the Chromium test browser reports light color-scheme. This is correct behaviour but may surprise users who expect dark by default; consider defaulting the stored preference to 'dark' instead of 'system' to match the brand."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_v11.py",
+    "/app/test_reports/pytest/test_auth_v11_iter8.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/server.py is still 2600+ lines — should be split into routers (already flagged in iter 7).",
+    "OTP lockout counter still resets when a fresh OTP is requested for the same email (per-record vs per-email) — security weakness flagged in iter 7 is still open.",
+    "Theme default is 'system' which paints light on light-OS users — consider defaulting to 'dark' to match the dark + warm gold brand identity shown in the sign-in screen."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100% of tested flows (OTP signin, Home wordmark+initial avatar, theme toggle Light/Dark/System, Security Center render, Expo QR card, You tab links)"},
+  "test_credentials": "Passwordless OTP via /api/auth/otp/request returning dev_code (DEV_OTP_RETURN_CODE=true, RESEND_API_KEY blank). Used emails test_iter8@oraos.app, test_iter8c@oraos.app, test_iter8d@oraos.app for this run.",
+  "seed_data_creation": "Each pytest test creates an ephemeral user via OTP and deletes via /api/account/delete. Playwright tests created ~3 ephemeral users (not deleted from UI but harmless — backend allows account/delete via API).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Frontend is Expo Router web. Direct goto('/settings') or goto('/security') logs the user out because the auth token lives in AsyncStorage which doesn't rehydrate fast enough across a full page reload — navigate via the You tab links (you-settings, you-security, you-help) instead. Sign-in testids: signin-email-btn -> signin-email-input -> signin-send-code-btn -> signin-code-input -> signin-verify-btn (NOT signin-email-send-btn / signin-otp-* as the brief listed). Home testids confirmed: home-brand, home-avatar-button, home-avatar-initial. Settings testids: theme-light, theme-dark, theme-system, set-email, set-name, set-provider, btn-signout, btn-signout-all, btn-delete-account. Security testids: security-screen, session-<uuid>, revoke-<uuid>, security-signout-all, event-<uuid>. Live Expo tunnel rotates per Metro restart — /api/expo-qr regenerates the QR each request.",
+  "rca of the issue": "No new issues introduced this iteration. All previously-fixed flows remain green. The previously-flagged OTP lockout brute-force weakness (iter 7) is still present and a security improvement worth addressing."
+}

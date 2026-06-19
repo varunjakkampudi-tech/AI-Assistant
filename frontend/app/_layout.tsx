@@ -8,14 +8,15 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
-import { AuthProvider, useAuth } from "@/src/auth";
+import { AuthProvider, useAuth, useColors } from "@/src/auth";
 import { setApiToken } from "@/src/api";
 import { theme as baseTheme } from "@/src/theme";
 
 SplashScreen.preventAutoHideAsync();
 
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { user, accessToken, loading } = useAuth();
+  const { user, accessToken, loading, effectiveTheme } = useAuth();
+  const c = useColors();
   const router = useRouter();
   const segments = useSegments();
 
@@ -35,14 +36,32 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return (
-      <View style={styles.boot}>
-        <View style={styles.bootOrb} />
-        <ActivityIndicator color={baseTheme.color.brand} />
-        <Text style={styles.bootText}>ORA OS</Text>
+      <View style={[styles.boot, { backgroundColor: c.surface }]}>
+        <View style={[styles.bootOrb, { backgroundColor: c.brand, shadowColor: c.brand }]} />
+        <ActivityIndicator color={c.brand} />
+        <Text style={[styles.bootText, { color: c.brand }]}>ORA OS</Text>
       </View>
     );
   }
-  return <>{children}</>;
+  return (
+    <>
+      <StatusBar style={effectiveTheme === "light" ? "dark" : "light"} />
+      {children}
+    </>
+  );
+}
+
+function ThemedStack() {
+  const c = useColors();
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: c.surface },
+        animation: "fade",
+      }}
+    />
+  );
 }
 
 export default function RootLayout() {
@@ -66,18 +85,11 @@ export default function RootLayout() {
   if ((!iconsLoaded && !iconsError) || !fontsReady) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#0a0a0c" }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <StatusBar style="light" />
         <AuthProvider>
           <AuthGate>
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: "#0a0a0c" },
-                animation: "fade",
-              }}
-            />
+            <ThemedStack />
           </AuthGate>
         </AuthProvider>
       </SafeAreaProvider>
@@ -88,7 +100,6 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   boot: {
     flex: 1,
-    backgroundColor: "#0a0a0c",
     alignItems: "center",
     justifyContent: "center",
     gap: 24,
@@ -97,15 +108,12 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: baseTheme.color.brand,
     opacity: 0.5,
-    shadowColor: baseTheme.color.brand,
     shadowOpacity: 0.9,
     shadowRadius: 40,
     shadowOffset: { width: 0, height: 0 },
   },
   bootText: {
-    color: baseTheme.color.brand,
     fontFamily: baseTheme.font.display,
     fontSize: 24,
     letterSpacing: 4,

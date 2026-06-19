@@ -1,14 +1,16 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, TextInput, Alert, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { theme } from "@/src/theme";
-import { useAuth, authedFetch } from "@/src/auth";
+import { useAuth, authedFetch, useColors } from "@/src/auth";
 import ScreenHeader from "@/src/components/ScreenHeader";
 
 interface FAQ { q: string; a: string; }
 
 export default function HelpScreen() {
+  const c = useColors();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { accessToken } = useAuth();
   const [faq, setFaq] = useState<FAQ[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,7 +59,7 @@ export default function HelpScreen() {
             onPress={() => Linking.openURL("mailto:support@oraos.app")}
             testID="contact-email"
           >
-            <Ionicons name="mail" size={22} color={theme.color.brand} />
+            <Ionicons name="mail" size={22} color={c.brand} />
             <Text style={styles.contactLabel}>Email</Text>
             <Text style={styles.contactSub}>support@oraos.app</Text>
           </Pressable>
@@ -66,14 +68,14 @@ export default function HelpScreen() {
             onPress={() => Linking.openURL("tel:+1-555-OOO-OS00")}
             testID="contact-phone"
           >
-            <Ionicons name="call" size={22} color={theme.color.brand} />
+            <Ionicons name="call" size={22} color={c.brand} />
             <Text style={styles.contactLabel}>Phone</Text>
             <Text style={styles.contactSub}>Mon–Fri 9–18</Text>
           </Pressable>
         </View>
 
         <Text style={styles.section}>FREQUENTLY ASKED</Text>
-        {loading ? <ActivityIndicator color={theme.color.brand} /> : faq.map((f, i) => (
+        {loading ? <ActivityIndicator color={c.brand} /> : faq.map((f, i) => (
           <Pressable
             key={i}
             style={styles.faqCard}
@@ -85,7 +87,7 @@ export default function HelpScreen() {
               <Ionicons
                 name={openIdx === i ? "chevron-up" : "chevron-down"}
                 size={16}
-                color={theme.color.onSurfaceSecondary}
+                color={c.onSurfaceSecondary}
               />
             </View>
             {openIdx === i && <Text style={styles.faqA}>{f.a}</Text>}
@@ -101,7 +103,7 @@ export default function HelpScreen() {
               onPress={() => setKind(k)}
               testID={`kind-${k}`}
             >
-              <Text style={[styles.kindText, kind === k && { color: theme.color.onBrand, fontWeight: "700" }]}>
+              <Text style={[styles.kindText, kind === k && { color: c.onBrand, fontWeight: "700" }]}>
                 {k === "general" ? "General" : k === "bug" ? "Report bug" : "Request feature"}
               </Text>
             </Pressable>
@@ -112,7 +114,7 @@ export default function HelpScreen() {
           value={subject}
           onChangeText={setSubject}
           placeholder="Subject"
-          placeholderTextColor={theme.color.onSurfaceSecondary}
+          placeholderTextColor={c.onSurfaceSecondary}
           testID="help-subject"
         />
         <TextInput
@@ -120,7 +122,7 @@ export default function HelpScreen() {
           value={message}
           onChangeText={setMessage}
           placeholder="Tell us what's on your mind…"
-          placeholderTextColor={theme.color.onSurfaceSecondary}
+          placeholderTextColor={c.onSurfaceSecondary}
           multiline
           testID="help-message"
         />
@@ -130,7 +132,7 @@ export default function HelpScreen() {
           disabled={sending}
           testID="help-send"
         >
-          {sending ? <ActivityIndicator color={theme.color.onBrand} /> : <Text style={styles.sendText}>Send message</Text>}
+          {sending ? <ActivityIndicator color={c.onBrand} /> : <Text style={styles.sendText}>Send message</Text>}
         </Pressable>
 
         <View style={{ height: 80 }} />
@@ -139,43 +141,43 @@ export default function HelpScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.color.surface },
+const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.surface },
   content: { padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: 60 },
   contactRow: { flexDirection: "row", gap: theme.spacing.md },
   contactCard: {
     flex: 1, alignItems: "center", gap: 4,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.lg, padding: theme.spacing.lg,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
-  contactLabel: { color: theme.color.onSurface, fontSize: 13, fontWeight: "600", marginTop: 4 },
-  contactSub: { color: theme.color.onSurfaceSecondary, fontSize: 11 },
-  section: { color: theme.color.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginTop: theme.spacing.lg },
+  contactLabel: { color: c.onSurface, fontSize: 13, fontWeight: "600", marginTop: 4 },
+  contactSub: { color: c.onSurfaceSecondary, fontSize: 11 },
+  section: { color: c.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginTop: theme.spacing.lg },
   faqCard: {
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.md, padding: theme.spacing.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
   faqHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  faqQ: { flex: 1, color: theme.color.onSurface, fontSize: 14, fontWeight: "500", paddingRight: 8 },
-  faqA: { color: theme.color.onSurfaceSecondary, fontSize: 13, marginTop: theme.spacing.sm, lineHeight: 20 },
+  faqQ: { flex: 1, color: c.onSurface, fontSize: 14, fontWeight: "500", paddingRight: 8 },
+  faqA: { color: c.onSurfaceSecondary, fontSize: 13, marginTop: theme.spacing.sm, lineHeight: 20 },
   kindRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
   kindPill: {
     paddingHorizontal: theme.spacing.md, paddingVertical: 8,
     borderRadius: theme.radius.pill,
-    backgroundColor: theme.color.surfaceSecondary,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    backgroundColor: c.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
-  kindPillActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  kindText: { color: theme.color.onSurface, fontSize: 12, fontWeight: "500" },
+  kindPillActive: { backgroundColor: c.brand, borderColor: c.brand },
+  kindText: { color: c.onSurface, fontSize: 12, fontWeight: "500" },
   input: {
-    backgroundColor: theme.color.surfaceSecondary,
-    color: theme.color.onSurface, fontSize: 14,
+    backgroundColor: c.surfaceSecondary,
+    color: c.onSurface, fontSize: 14,
     paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.md,
     borderRadius: theme.radius.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.borderStrong,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.borderStrong,
   },
-  sendBtn: { backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: theme.radius.pill, alignItems: "center" },
-  sendText: { color: theme.color.onBrand, fontWeight: "700", fontSize: 14 },
+  sendBtn: { backgroundColor: c.brand, paddingVertical: 14, borderRadius: theme.radius.pill, alignItems: "center" },
+  sendText: { color: c.onBrand, fontWeight: "700", fontSize: 14 },
 });

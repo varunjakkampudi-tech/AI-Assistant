@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import * as Location from "expo-location";
 import { theme } from "@/src/theme";
 import { api } from "@/src/api";
 import VoiceOrb from "@/src/components/VoiceOrb";
+import { useAuth, useColors } from "@/src/auth";
 
 interface Briefing {
   greeting: string;
@@ -54,6 +55,10 @@ const QUICK_ACTIONS: QuickAction[] = [
 
 export default function HomeScreen() {
   const router = useRouter();
+  const c = useColors();
+  const styles = useMemo(() => makeStyles(c), [c]);
+  const { user } = useAuth();
+  const initial = (user?.name || user?.email || "U").charAt(0).toUpperCase();
   const [data, setData] = useState<Briefing | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -94,29 +99,13 @@ export default function HomeScreen() {
     + (data?.active_goals?.length || 0);
 
   const overview: OverviewItem[] = [
-    {
-      label: "Messages",
-      value: data?.recent_emails?.length ?? 0,
-      icon: "chatbubble-ellipses",
-      testID: "ov-messages",
-    },
-    {
-      label: "Events",
-      value: data?.upcoming_events?.length ?? 0,
-      icon: "calendar",
-      testID: "ov-events",
-    },
-    {
-      label: "Tasks",
-      value: data?.pending_reminders?.length ?? 0,
-      icon: "checkbox",
-      testID: "ov-tasks",
-    },
+    { label: "Messages", value: data?.recent_emails?.length ?? 0, icon: "chatbubble-ellipses", testID: "ov-messages" },
+    { label: "Events", value: data?.upcoming_events?.length ?? 0, icon: "calendar", testID: "ov-events" },
+    { label: "Tasks", value: data?.pending_reminders?.length ?? 0, icon: "checkbox", testID: "ov-tasks" },
     {
       label: "Focus Score",
       value: data ? Math.min(99, 60 + (data.active_goals?.length || 0) * 6 + (data.session_count || 0)) : 0,
-      icon: "trending-up",
-      testID: "ov-focus",
+      icon: "trending-up", testID: "ov-focus",
     },
   ];
 
@@ -124,7 +113,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.root} testID="home-screen">
-      <SafeAreaView edges={["top"]} style={{ backgroundColor: theme.color.surface }}>
+      <SafeAreaView edges={["top"]} style={{ backgroundColor: c.surface }}>
         <View style={styles.topBar}>
           <Pressable
             style={styles.iconBtn}
@@ -132,19 +121,21 @@ export default function HomeScreen() {
             hitSlop={10}
             testID="home-menu-button"
           >
-            <Ionicons name="menu" size={20} color={theme.color.onSurface} />
+            <Ionicons name="menu" size={20} color={c.onSurface} />
           </Pressable>
-          <View style={{ flex: 1 }} />
+          <View style={styles.brandWrap} pointerEvents="none">
+            <Text style={styles.brandWord} testID="home-brand">ORA OS</Text>
+          </View>
           <Pressable
             style={styles.avatarBtn}
             onPress={() => router.push("/you")}
             testID="home-avatar-button"
           >
             <LinearGradient
-              colors={[theme.color.brandSecondary, theme.color.brand]}
+              colors={[c.brandSecondary, c.brand]}
               style={styles.avatarGradient}
             >
-              <Ionicons name="person" size={16} color={theme.color.onBrand} />
+              <Text style={styles.avatarInitial} testID="home-avatar-initial">{initial}</Text>
             </LinearGradient>
           </Pressable>
         </View>
@@ -154,7 +145,7 @@ export default function HomeScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={styles.scroll}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.color.brand} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.brand} />
         }
         showsVerticalScrollIndicator={false}
       >
@@ -167,7 +158,7 @@ export default function HomeScreen() {
             <Text style={styles.wave}> 👋</Text>
           </View>
           <Text style={styles.greetingSub}>
-            Here's your {timeOfDay()} briefing
+            Here&apos;s your {timeOfDay()} briefing
           </Text>
         </View>
 
@@ -185,7 +176,7 @@ export default function HomeScreen() {
           testID="priority-card"
         >
           <View style={styles.priorityIcon}>
-            <Ionicons name="flash" size={18} color={theme.color.brand} />
+            <Ionicons name="flash" size={18} color={c.brand} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.priorityTitle}>
@@ -193,7 +184,7 @@ export default function HomeScreen() {
             </Text>
             <Text style={styles.prioritySub}>Tap to review</Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color={theme.color.onSurfaceSecondary} />
+          <Ionicons name="chevron-forward" size={18} color={c.onSurfaceSecondary} />
         </Pressable>
 
         {/* Overview */}
@@ -204,7 +195,7 @@ export default function HomeScreen() {
               <View style={styles.overviewRow}>
                 <Text style={styles.overviewLabel}>{it.label}</Text>
                 <View style={styles.overviewIconWrap}>
-                  <Ionicons name={it.icon} size={14} color={theme.color.brand} />
+                  <Ionicons name={it.icon} size={14} color={c.brand} />
                 </View>
               </View>
               <Text style={styles.overviewValue}>{it.value}</Text>
@@ -223,7 +214,7 @@ export default function HomeScreen() {
               testID={qa.testID}
             >
               <View style={styles.actionIconWrap}>
-                <Ionicons name={qa.icon} size={22} color={theme.color.brand} />
+                <Ionicons name={qa.icon} size={22} color={c.brand} />
               </View>
               <Text style={styles.actionLabel}>{qa.label}</Text>
             </Pressable>
@@ -247,12 +238,12 @@ export default function HomeScreen() {
           </Text>
           <View style={styles.insightFooter}>
             <Text style={styles.insightAction}>View dashboard</Text>
-            <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
+            <Ionicons name="arrow-forward" size={14} color={c.brand} />
           </View>
         </Pressable>
 
         {loading && (
-          <ActivityIndicator color={theme.color.brand} style={{ marginTop: 16 }} />
+          <ActivityIndicator color={c.brand} style={{ marginTop: 16 }} />
         )}
 
         <View style={{ height: 100 }} />
@@ -268,8 +259,8 @@ function timeOfDay() {
   return "evening";
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.color.surface },
+const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.surface },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -282,24 +273,33 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    borderColor: c.border,
   },
   avatarBtn: { width: 38, height: 38, borderRadius: 19, overflow: "hidden" },
   avatarGradient: { flex: 1, alignItems: "center", justifyContent: "center" },
+  avatarInitial: { color: c.onBrand, fontFamily: theme.font.display, fontSize: 17, lineHeight: 20 },
+  brandWrap: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
+  brandWord: {
+    color: c.brand,
+    fontFamily: theme.font.display,
+    fontSize: 18,
+    letterSpacing: 4,
+    fontWeight: "600",
+  },
   scroll: { paddingHorizontal: theme.spacing.lg, paddingBottom: 120 },
   greetingWrap: { marginTop: theme.spacing.md, marginBottom: theme.spacing.lg },
   greetingRow: { flexDirection: "row", alignItems: "center" },
   greetingText: {
-    color: theme.color.onSurface,
+    color: c.onSurface,
     fontFamily: theme.font.display,
     fontSize: 30,
     letterSpacing: -0.5,
   },
   wave: { fontSize: 26 },
   greetingSub: {
-    color: theme.color.onSurfaceSecondary,
+    color: c.onSurfaceSecondary,
     fontSize: 14,
     marginTop: 4,
     letterSpacing: 0.2,
@@ -316,7 +316,7 @@ const styles = StyleSheet.create({
     width: 280,
     height: 280,
     borderRadius: 140,
-    backgroundColor: theme.color.brand,
+    backgroundColor: c.brand,
     opacity: 0.06,
   },
   orbHaloMid: {
@@ -324,32 +324,32 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: theme.color.brand,
+    backgroundColor: c.brand,
     opacity: 0.1,
   },
   priorityCard: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing.md,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    borderColor: c.border,
     marginBottom: theme.spacing.xl,
   },
   priorityIcon: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: theme.color.brandTertiary,
+    backgroundColor: c.brandTertiary,
     alignItems: "center",
     justifyContent: "center",
   },
-  priorityTitle: { color: theme.color.onSurface, fontSize: 15, fontWeight: "500" },
-  prioritySub: { color: theme.color.onSurfaceSecondary, fontSize: 12, marginTop: 2 },
+  priorityTitle: { color: c.onSurface, fontSize: 15, fontWeight: "500" },
+  prioritySub: { color: c.onSurfaceSecondary, fontSize: 12, marginTop: 2 },
   sectionLabel: {
-    color: theme.color.onSurfaceSecondary,
+    color: c.onSurfaceSecondary,
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 1.8,
@@ -365,16 +365,16 @@ const styles = StyleSheet.create({
   overviewCard: {
     width: "47%",
     flexGrow: 1,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    borderColor: c.border,
     gap: theme.spacing.sm,
   },
   overviewRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   overviewLabel: {
-    color: theme.color.onSurfaceSecondary,
+    color: c.onSurfaceSecondary,
     fontSize: 12,
     letterSpacing: 0.3,
   },
@@ -382,12 +382,12 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: theme.color.brandTertiary,
+    backgroundColor: c.brandTertiary,
     alignItems: "center",
     justifyContent: "center",
   },
   overviewValue: {
-    color: theme.color.onSurface,
+    color: c.onSurface,
     fontFamily: theme.font.display,
     fontSize: 26,
     letterSpacing: -0.5,
@@ -407,39 +407,39 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.brandSecondary,
+    borderColor: c.brandSecondary,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: theme.color.brand,
+    shadowColor: c.brand,
     shadowOpacity: 0.25,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
   },
   actionLabel: {
-    color: theme.color.onSurfaceSecondary,
+    color: c.onSurfaceSecondary,
     fontSize: 11,
     fontWeight: "500",
   },
   insightTeaser: {
     marginTop: theme.spacing.xl,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.lg,
     padding: theme.spacing.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+    borderColor: c.border,
     gap: theme.spacing.sm,
   },
   insightLeft: { flexDirection: "row", alignItems: "center", gap: theme.spacing.sm },
-  insightDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.brand },
+  insightDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: c.brand },
   insightLabel: {
-    color: theme.color.brand,
+    color: c.brand,
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 1.5,
   },
-  insightTitle: { color: theme.color.onSurface, fontSize: 16, fontWeight: "500" },
+  insightTitle: { color: c.onSurface, fontSize: 16, fontWeight: "500" },
   insightFooter: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
-  insightAction: { color: theme.color.brand, fontSize: 12, fontWeight: "600" },
+  insightAction: { color: c.brand, fontSize: 12, fontWeight: "600" },
 });

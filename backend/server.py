@@ -2489,13 +2489,61 @@ app.include_router(api_router)
 app.include_router(auth_routes_mod.router, prefix="/api")
 
 
+async def _resolve_expo_tunnel_url() -> str:
+    """Resolve the current live Expo tunnel URL (exp://...).
+
+    Tries the local Metro dev server's manifest first (which exposes the
+    rotating ngrok host), then falls back to EXPO_TUNNEL_URL.
+    """
+    tunnel_host = None
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.get(
+                "http://localhost:3000/",
+                headers={
+                    "Expo-Platform": "ios",
+                    "Accept": "application/expo+json,application/json",
+                },
+            )
+            if r.status_code == 200:
+                manifest = r.json()
+                launch_url = manifest.get("launchAsset", {}).get("url", "")
+                if "://" in launch_url:
+                    tunnel_host = launch_url.split("://", 1)[1].split("/", 1)[0]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"expo-qr: couldn't read live tunnel from Metro: {e}")
+
+    # Also try ngrok's local API directly
+    if not tunnel_host:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get("http://localhost:4040/api/tunnels")
+                if r.status_code == 200:
+                    data = r.json()
+                    for t in data.get("tunnels", []):
+                        pu = t.get("public_url", "")
+                        if pu.startswith("https://"):
+                            tunnel_host = pu.replace("https://", "").rstrip("/")
+                            break
+        except Exception:
+            pass
+
+    if not tunnel_host:
+        tunnel_host = os.environ.get("EXPO_TUNNEL_URL", "exp://localhost:3000").replace("exp://", "").replace("http://", "").replace("https://", "")
+
+    return f"exp://{tunnel_host}"
+
+
 @app.get("/api/expo-qr")
 async def expo_qr():
     """Returns metadata for the Expo Go install card shown on the You tab."""
     base = os.environ.get("APP_PUBLIC_URL", "")
+    exp_url = await _resolve_expo_tunnel_url()
     return {
         "app_name": os.environ.get("APP_NAME", "ORA OS"),
         "preview_url": base,
+        "expo_url": exp_url,
+        "universal_link": f"https://exp.host/--/to-exp/{exp_url}",
         "expo_go_ios": "https://apps.apple.com/app/expo-go/id982107779",
         "expo_go_android": "https://play.google.com/store/apps/details?id=host.exp.exponent",
         "qr_image_url": f"{base}/api/expo-qr/png",
@@ -2509,20 +2557,21 @@ async def expo_qr():
 
 @app.get("/api/expo-qr/png")
 async def expo_qr_png():
-    """Generates a QR code PNG pointing to the preview URL (cheap, on-the-fly)."""
+    """Generates a QR code PNG pointing to the live Expo Go tunnel URL."""
     from fastapi.responses import Response
+    from urllib.parse import quote
     import io
-    base = os.environ.get("APP_PUBLIC_URL", "https://oraos.app")
+    exp_url = await _resolve_expo_tunnel_url()
     try:
         import qrcode
-        img = qrcode.make(base)
+        img = qrcode.make(exp_url)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        return Response(content=buf.getvalue(), media_type="image/png")
+        return Response(content=buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-store"})
     except ImportError:
         # Fallback: redirect to a public QR generator (free, no API key)
         return RedirectResponse(
-            f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&bgcolor=0a0a0c&color=E1B168&data={base}"
+            f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&bgcolor=0a0a0c&color=E1B168&data={quote(exp_url)}"
         )
 
 

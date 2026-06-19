@@ -9,6 +9,7 @@ import { Appearance } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
 import { storage } from "@/src/utils/storage";
+import { palettes, ColorPalette } from "@/src/theme";
 
 const ACCESS_KEY = "ora_access_token";
 const REFRESH_KEY = "ora_refresh_token";
@@ -258,6 +259,17 @@ export function useAuth(): AuthCtx {
   const v = useContext(Ctx);
   if (!v) throw new Error("useAuth must be inside AuthProvider");
   return v;
+}
+
+/**
+ * Returns the active colour palette based on the user's theme preference.
+ * Screens that need to be light/dark aware should compute their styles
+ * inside the render function from this palette (e.g. inline styles or
+ * `useMemo`-cached StyleSheet) instead of importing `theme.color.*` statically.
+ */
+export function useColors(): ColorPalette {
+  const { effectiveTheme } = useAuth();
+  return palettes[effectiveTheme];
 }
 
 // Helper for any API call that needs bearer auth

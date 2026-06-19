@@ -78,7 +78,7 @@
 ## ⚠️ Action required from user
 
 1. Update the Google OAuth client's authorized redirect URI to:
-   `https://221e78fe-2385-4da2-90f3-63d5ce6338fc.preview.emergentagent.com/api/google/callback`
+   `https://ora-expo-deployment.preview.emergentagent.com/api/google/callback`
 2. Confirm final app name (placeholder is `ORA OS`).
 3. Before public launch: register `oraos.app` (or your final domain), then verify it with Resend so emails are delivered from a branded sender. Until then, the dev fallback keeps the OTP flow testable for free.
 4. Privacy policy URL for store submission: use `https://<your-domain>/api/legal/privacy` (already live on the preview).

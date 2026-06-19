@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 
 import { theme } from "@/src/theme";
-import { useAuth, authedFetch } from "@/src/auth";
+import { useAuth, authedFetch, useColors } from "@/src/auth";
 import { api } from "@/src/api";
 
 interface ItemConfig {
@@ -27,9 +27,13 @@ interface ItemConfig {
 
 export default function YouScreen() {
   const router = useRouter();
+  const c = useColors();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { user, accessToken, signOut } = useAuth();
   const [stats, setStats] = useState<{ memories: number; sessions: number; activeSessions: number } | null>(null);
-  const [expoInfo, setExpoInfo] = useState<{ qr_image_url: string; preview_url: string; expo_go_ios: string; expo_go_android: string } | null>(null);
+  const [expoInfo, setExpoInfo] = useState<{ qr_image_url: string; preview_url: string; expo_url?: string; expo_go_ios: string; expo_go_android: string } | null>(null);
+
+  const initial = (user?.name || user?.email || "U").charAt(0).toUpperCase();
 
   const load = useCallback(async () => {
     try {
@@ -92,7 +96,7 @@ export default function YouScreen() {
 
   return (
     <View style={styles.root} testID="you-screen">
-      <SafeAreaView edges={["top"]} style={{ backgroundColor: theme.color.surface }}>
+      <SafeAreaView edges={["top"]} style={{ backgroundColor: c.surface }}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>You</Text>
         </View>
@@ -101,24 +105,22 @@ export default function YouScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Profile card */}
         <View style={styles.profileCard} testID="you-profile-card">
-          <LinearGradient colors={[theme.color.brandSecondary, theme.color.brand]} style={styles.profileAvatar}>
-            <Text style={styles.profileInitial}>
-              {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
-            </Text>
+          <LinearGradient colors={[c.brandSecondary, c.brand]} style={styles.profileAvatar}>
+            <Text style={styles.profileInitial} testID="you-profile-initial">{initial}</Text>
           </LinearGradient>
           <View style={{ flex: 1 }}>
-            <Text style={styles.profileName}>{user?.name || "ORA member"}</Text>
+            <Text style={styles.profileName}>{user?.name || "ORA OS member"}</Text>
             <Text style={styles.profileEmail} numberOfLines={1}>{user?.email || "—"}</Text>
             <Text style={styles.providerTag}>
               <Ionicons
                 name={user?.provider === "google" ? "logo-google" : user?.provider === "apple" ? "logo-apple" : "mail"}
                 size={10}
-                color={theme.color.brand}
+                color={c.brand}
               /> {user?.provider === "email_otp" ? "Email OTP" : (user?.provider || "—")}
             </Text>
           </View>
           <Pressable style={styles.signoutBtn} onPress={signOut} testID="you-signout">
-            <Ionicons name="log-out-outline" size={18} color={theme.color.onSurfaceSecondary} />
+            <Ionicons name="log-out-outline" size={18} color={c.onSurfaceSecondary} />
           </Pressable>
         </View>
 
@@ -149,17 +151,17 @@ export default function YouScreen() {
               <Text style={styles.expoSub}>Install Expo Go, then point your camera here.</Text>
               <View style={styles.expoBtns}>
                 <Pressable style={styles.expoBtn} onPress={() => Linking.openURL(expoInfo.expo_go_ios)} testID="expo-go-ios">
-                  <Ionicons name="logo-apple" size={12} color={theme.color.brand} />
+                  <Ionicons name="logo-apple" size={12} color={c.brand} />
                   <Text style={styles.expoBtnText}>iOS</Text>
                 </Pressable>
                 <Pressable style={styles.expoBtn} onPress={() => Linking.openURL(expoInfo.expo_go_android)} testID="expo-go-android">
-                  <Ionicons name="logo-android" size={12} color={theme.color.brand} />
+                  <Ionicons name="logo-android" size={12} color={c.brand} />
                   <Text style={styles.expoBtnText}>Android</Text>
                 </Pressable>
               </View>
             </View>
             <View style={styles.qrFrame}>
-              <RNImage source={{ uri: expoInfo.qr_image_url }} style={styles.qrImage} resizeMode="contain" />
+              <RNImage source={{ uri: `${expoInfo.qr_image_url}?t=${Date.now()}` }} style={styles.qrImage} resizeMode="contain" />
             </View>
           </View>
         )}
@@ -177,13 +179,13 @@ export default function YouScreen() {
                   testID={it.testID}
                 >
                   <View style={styles.rowIcon}>
-                    <Ionicons name={it.icon} size={18} color={theme.color.brand} />
+                    <Ionicons name={it.icon} size={18} color={c.brand} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowLabel}>{it.label}</Text>
                     {!!it.sub && <Text style={styles.rowSub}>{it.sub}</Text>}
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color={theme.color.onSurfaceSecondary} />
+                  <Ionicons name="chevron-forward" size={16} color={c.onSurfaceSecondary} />
                 </Pressable>
               ))}
             </View>
@@ -198,68 +200,68 @@ export default function YouScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.color.surface },
+const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.surface },
   header: { paddingHorizontal: theme.spacing.lg, paddingVertical: theme.spacing.sm },
-  headerTitle: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 26, letterSpacing: -0.3 },
+  headerTitle: { color: c.onSurface, fontFamily: theme.font.display, fontSize: 26, letterSpacing: -0.3 },
   scroll: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.sm },
   profileCard: {
     flexDirection: "row", alignItems: "center", gap: theme.spacing.md,
-    backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.lg,
+    backgroundColor: c.surfaceSecondary, borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
   profileAvatar: { width: 56, height: 56, borderRadius: 28, alignItems: "center", justifyContent: "center" },
-  profileInitial: { color: theme.color.onBrand, fontFamily: theme.font.display, fontSize: 24 },
-  profileName: { color: theme.color.onSurface, fontSize: 16, fontWeight: "600" },
-  profileEmail: { color: theme.color.onSurfaceSecondary, fontSize: 12, marginTop: 2 },
-  providerTag: { color: theme.color.brand, fontSize: 10, marginTop: 4, letterSpacing: 1 },
+  profileInitial: { color: c.onBrand, fontFamily: theme.font.display, fontSize: 24 },
+  profileName: { color: c.onSurface, fontSize: 16, fontWeight: "600" },
+  profileEmail: { color: c.onSurfaceSecondary, fontSize: 12, marginTop: 2 },
+  providerTag: { color: c.brand, fontSize: 10, marginTop: 4, letterSpacing: 1 },
   signoutBtn: { padding: 8 },
   statsRow: { flexDirection: "row", gap: theme.spacing.sm, marginTop: theme.spacing.md },
   statBox: {
-    flex: 1, backgroundColor: theme.color.surfaceSecondary,
+    flex: 1, backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.md, padding: theme.spacing.md,
-    alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    alignItems: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
-  statVal: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 22 },
-  statLbl: { color: theme.color.onSurfaceSecondary, fontSize: 10, marginTop: 4, letterSpacing: 0.8 },
+  statVal: { color: c.onSurface, fontFamily: theme.font.display, fontSize: 22 },
+  statLbl: { color: c.onSurfaceSecondary, fontSize: 10, marginTop: 4, letterSpacing: 0.8 },
   expoCard: {
     flexDirection: "row", gap: theme.spacing.md, marginTop: theme.spacing.md,
-    backgroundColor: theme.color.brandTertiary, borderRadius: theme.radius.lg,
+    backgroundColor: c.brandTertiary, borderRadius: theme.radius.lg,
     padding: theme.spacing.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.brandSecondary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.brandSecondary,
     alignItems: "center",
   },
   expoLeft: { flex: 1, gap: 4 },
-  expoLabel: { color: theme.color.brand, fontSize: 9, fontWeight: "700", letterSpacing: 1.8 },
-  expoTitle: { color: theme.color.onSurface, fontFamily: theme.font.display, fontSize: 18 },
-  expoSub: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  expoLabel: { color: c.brand, fontSize: 9, fontWeight: "700", letterSpacing: 1.8 },
+  expoTitle: { color: c.onSurface, fontFamily: theme.font.display, fontSize: 18 },
+  expoSub: { color: c.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
   expoBtns: { flexDirection: "row", gap: 6, marginTop: 6 },
   expoBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
-  expoBtnText: { color: theme.color.brand, fontSize: 11, fontWeight: "600" },
+  expoBtnText: { color: c.brand, fontSize: 11, fontWeight: "600" },
   qrFrame: {
-    width: 92, height: 92, borderRadius: theme.radius.md,
+    width: 100, height: 100, borderRadius: theme.radius.md,
     backgroundColor: "#fff",
-    padding: 4, alignItems: "center", justifyContent: "center",
+    padding: 6, alignItems: "center", justifyContent: "center",
   },
   qrImage: { width: "100%", height: "100%" },
   section: { marginTop: theme.spacing.xl },
-  sectionLabel: { color: theme.color.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginBottom: theme.spacing.sm },
+  sectionLabel: { color: c.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginBottom: theme.spacing.sm },
   sectionCard: {
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     borderRadius: theme.radius.lg,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
     overflow: "hidden",
   },
   row: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.md },
-  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.divider },
-  rowIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTertiary, alignItems: "center", justifyContent: "center" },
-  rowLabel: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500" },
-  rowSub: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
-  tagline: { color: theme.color.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: theme.spacing.xl, fontStyle: "italic" },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.divider },
+  rowIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: c.brandTertiary, alignItems: "center", justifyContent: "center" },
+  rowLabel: { color: c.onSurface, fontSize: 14, fontWeight: "500" },
+  rowSub: { color: c.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  tagline: { color: c.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: theme.spacing.xl, fontStyle: "italic" },
 });

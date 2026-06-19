@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert, RefreshControl } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { theme } from "@/src/theme";
-import { useAuth, authedFetch } from "@/src/auth";
+import { useAuth, authedFetch, useColors } from "@/src/auth";
 import ScreenHeader from "@/src/components/ScreenHeader";
 
 interface Session {
@@ -46,6 +46,8 @@ function fmtTime(iso: string) {
 }
 
 export default function SecurityScreen() {
+  const c = useColors();
+  const styles = useMemo(() => makeStyles(c), [c]);
   const { accessToken, signOutAll } = useAuth();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -82,14 +84,14 @@ export default function SecurityScreen() {
       <ScreenHeader title="Security Center" />
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.color.brand} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={c.brand} />}
       >
         {loading ? (
-          <ActivityIndicator color={theme.color.brand} style={{ marginTop: 64 }} />
+          <ActivityIndicator color={c.brand} style={{ marginTop: 64 }} />
         ) : (
           <>
             <View style={styles.heroCard}>
-              <Ionicons name="shield-checkmark" size={28} color={theme.color.brand} />
+              <Ionicons name="shield-checkmark" size={28} color={c.brand} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.heroTitle}>Your account is protected</Text>
                 <Text style={styles.heroSub}>
@@ -115,7 +117,7 @@ export default function SecurityScreen() {
                           "desktop"
                         }
                         size={20}
-                        color={theme.color.brand}
+                        color={c.brand}
                       />
                     </View>
                     <View style={{ flex: 1 }}>
@@ -148,7 +150,7 @@ export default function SecurityScreen() {
               }}
               testID="security-signout-all"
             >
-              <Ionicons name="alert-circle" size={16} color={theme.color.error} />
+              <Ionicons name="alert-circle" size={16} color={c.error} />
               <Text style={styles.dangerText}>Sign out from all devices</Text>
             </Pressable>
 
@@ -161,7 +163,7 @@ export default function SecurityScreen() {
                   <Ionicons
                     name={e.ok ? "checkmark-circle" : "alert-circle"}
                     size={16}
-                    color={e.ok ? theme.color.success : theme.color.error}
+                    color={e.ok ? c.success : c.error}
                   />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.eventLabel}>{EVENT_LABEL[e.event] || e.event}</Text>
@@ -180,51 +182,51 @@ export default function SecurityScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.color.surface },
+const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.surface },
   content: { padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: 80 },
   heroCard: {
     flexDirection: "row", alignItems: "center", gap: theme.spacing.md,
-    backgroundColor: theme.color.brandTertiary,
+    backgroundColor: c.brandTertiary,
     borderRadius: theme.radius.lg, padding: theme.spacing.lg,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.brandSecondary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.brandSecondary,
   },
-  heroTitle: { color: theme.color.onSurface, fontSize: 15, fontWeight: "600" },
-  heroSub: { color: theme.color.onSurfaceSecondary, fontSize: 12, marginTop: 4, lineHeight: 17 },
-  section: { color: theme.color.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginTop: theme.spacing.lg },
-  empty: { color: theme.color.onSurfaceSecondary, fontSize: 13, fontStyle: "italic" },
+  heroTitle: { color: c.onSurface, fontSize: 15, fontWeight: "600" },
+  heroSub: { color: c.onSurfaceSecondary, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  section: { color: c.onSurfaceSecondary, fontSize: 11, fontWeight: "600", letterSpacing: 1.8, marginTop: theme.spacing.lg },
+  empty: { color: c.onSurfaceSecondary, fontSize: 13, fontStyle: "italic" },
   card: {
-    backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.lg,
-    padding: theme.spacing.md, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    backgroundColor: c.surfaceSecondary, borderRadius: theme.radius.lg,
+    padding: theme.spacing.md, borderWidth: StyleSheet.hairlineWidth, borderColor: c.border,
   },
   sessionRow: { flexDirection: "row", alignItems: "center", gap: theme.spacing.md },
   sessionIcon: {
     width: 38, height: 38, borderRadius: 19,
-    backgroundColor: theme.color.brandTertiary,
+    backgroundColor: c.brandTertiary,
     alignItems: "center", justifyContent: "center",
   },
-  sessionLabel: { color: theme.color.onSurface, fontSize: 14, fontWeight: "600" },
-  sessionMeta: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  sessionLabel: { color: c.onSurface, fontSize: 14, fontWeight: "600" },
+  sessionMeta: { color: c.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
   revokeBtn: {
     paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: theme.radius.pill, backgroundColor: theme.color.surfaceTertiary,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.error,
+    borderRadius: theme.radius.pill, backgroundColor: c.surfaceTertiary,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.error,
   },
-  revokeText: { color: theme.color.error, fontSize: 12, fontWeight: "600" },
+  revokeText: { color: c.error, fontSize: 12, fontWeight: "600" },
   dangerBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: theme.color.surfaceSecondary,
+    backgroundColor: c.surfaceSecondary,
     paddingVertical: 12, paddingHorizontal: theme.spacing.md,
     borderRadius: theme.radius.pill,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.error,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: c.error,
     justifyContent: "center",
   },
-  dangerText: { color: theme.color.error, fontSize: 13, fontWeight: "600" },
+  dangerText: { color: c.error, fontSize: 13, fontWeight: "600" },
   eventRow: {
     flexDirection: "row", alignItems: "center", gap: theme.spacing.md,
     paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.divider,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.divider,
   },
-  eventLabel: { color: theme.color.onSurface, fontSize: 13, fontWeight: "500" },
-  eventMeta: { color: theme.color.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
+  eventLabel: { color: c.onSurface, fontSize: 13, fontWeight: "500" },
+  eventMeta: { color: c.onSurfaceSecondary, fontSize: 11, marginTop: 2 },
 });

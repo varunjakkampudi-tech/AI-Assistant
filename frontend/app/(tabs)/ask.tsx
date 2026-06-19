@@ -352,7 +352,7 @@ export default function ChatScreen() {
             <Ionicons name="menu" size={22} color={theme.color.onSurface} />
           </Pressable>
           <View style={styles.headerTitleWrap}>
-            <Text style={styles.headerTitle}>ORA</Text>
+            <Text style={styles.headerTitle}>ORA OS</Text>
             <Text style={styles.headerSubtitle}>How can I help you today?</Text>
           </View>
           <Pressable
