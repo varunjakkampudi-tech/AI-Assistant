@@ -204,6 +204,7 @@ class PersonalDigitalTwin:
             profile["created_at"] = datetime.now(timezone.utc).isoformat()
             profile["updated_at"] = profile["created_at"]
             await self.db.user_profile.insert_one(profile)
+            profile.pop("_id", None)
         else:
             # Remove MongoDB _id field
             if "_id" in profile:

@@ -505,6 +505,13 @@ export default function ChatScreen() {
                 multiline
                 returnKeyType="send"
                 onSubmitEditing={() => send()}
+                onKeyPress={(e: any) => {
+                  // Web: Enter (without Shift) submits; Shift+Enter inserts newline
+                  if (Platform.OS === "web" && e?.nativeEvent?.key === "Enter" && !e?.nativeEvent?.shiftKey) {
+                    e.preventDefault?.();
+                    send();
+                  }
+                }}
                 testID="chat-input"
               />
               {input.trim().length > 0 || pendingImage ? (

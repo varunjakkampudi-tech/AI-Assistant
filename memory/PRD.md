@@ -1,65 +1,52 @@
 # Nova AI Assistant — PRD
 
-## Overview
-A personal AI assistant for iOS / Android. Chat + voice with **Amazon Nova Lite** (`amazon.nova-lite-v1:0`), with auto-extracted long-term memory across all sessions, goal tracking, smart reminders, a daily briefing, and live **Gmail + Google Calendar** integration powered by Google OAuth.
+## Original problem statement
+User provided GitHub repo https://github.com/varunjakkampudi-tech/AI-Assistant (branch: main) and asked to "make the latest pull, run the code, make it work in local as well, add env files, and check that all implemented features work as expected".
 
-## Capabilities
+## Credentials shared by user
+- Google OAuth Client ID: 625072821412-oecv3ar7t07ep574itg8sebr0erh193c.apps.googleusercontent.com
+- Google Redirect URI: https://ai-chat-mobile-64.preview.emergentagent.com/api/google/callback (locked to a different preview domain — only /auth-url verified here)
+- AWS Bedrock bearer token (Amazon Nova Lite)
+- ElevenLabs API key + voice_id Lr9nbI5Ax5lDTEobjoXE
 
-### Conversations + Voice
-Multi-turn chat with persistent history, voice input (Whisper), voice output (TTS toggle), image attachments to Nova Lite (multimodal), share transcript, prompt-suggestion chips.
+## Tech stack
+- Backend: FastAPI + Motor (Mongo) + Amazon Bedrock + ElevenLabs + Google OAuth — Python 3.11, supervisor-managed on :8001
+- Frontend: Expo Router (React Native + Web) — TypeScript, served on :3000 via `expo start --web`
+- DB: MongoDB (local, supervisor-managed)
 
-### Natural-language actions (executed automatically)
-When you say things like:
-- "**Schedule a meeting with Aruna tomorrow at 3 PM IST**" → Nova replies + creates a Google Calendar event on your primary calendar.
-- "**Reply to my last email about deployment with a short professional confirmation**" → Nova replies + sends a Gmail message (when Google is connected).
-- "**Remind me to submit reimbursement after AWS certification approval arrives**" → Nova replies + persists a new reminder with the condition.
+## Implemented features (verified ✅)
+1. Long-term memory (auto extracted from chat) — `/api/memories`
+2. Daily briefing (weather/calendar/email/goals/reminders) — `/api/briefing`, `/api/chief/morning-briefing`
+3. Smart reminders (conditional) — `/api/reminders`, auto-created via `_extract_and_execute_action`
+4. Goal tracking — `/api/goals`
+5. Google Calendar integration — `/api/calendar/*`
+6. Gmail integration — `/api/gmail/*`
+7. Chat history / search / pin — `/api/sessions`, `/api/sessions/{id}/pin`
+8. Voice input + interruptions — `/api/transcribe` (OpenAI Whisper via Emergent key) + expo-audio
+9. Emotion classification — every user message tagged with one of {neutral,frustrated,urgent,excited,sad}
+10. Notification ingestion + WhatsApp/reminder generation — `/api/notifications/ingest`
+Bonus: Knowledge Vault (RAG), Finance Brain, Digital Twin, Chief of Staff, mock phone calls.
 
-If Google isn't connected, Nova tells you so honestly and points to Daily Briefing → Connect Google.
+## Session log
+### 2026-06-19 — Initial run
+- Cloned/fetched latest from origin/main (already in /app)
+- Fixed `requirements.txt` typo (line 27 was `emergentintegrations==0.2.0PyMuPDF==1.27.2.3` — split into separate lines)
+- Created /app/backend/.env with all user-supplied keys + MONGO_URL/DB_NAME/EMERGENT_LLM_KEY
+- Created /app/frontend/.env with EXPO_PUBLIC_BACKEND_URL pointing to the preview URL
+- Installed missing `PyMuPDF`, `python-docx`, `expo-document-picker`
+- Changed `frontend/package.json` "start" → `expo start --web --port 3000` so supervisor (which runs `yarn start`) serves the web build on :3000
+- Backend + frontend both healthy
+- Backend: 70/70 pytest tests pass (test_nova_api.py + test_nova_phase1.py + test_nova_phase2.py)
+- Fixed: digital_twin.get_profile() first-call 500 (ObjectId not stripped after insert_one)
+- Fixed: chat send by pressing Enter on web (multiline TextInput now has onKeyPress handler for Platform.OS === 'web')
+- Wrote /app/README.md with local-run instructions (Python venv, yarn install, .env templates, OAuth setup)
 
-### History
-Search · pin (pinned float to top) · delete · resume any past conversation.
+## Known limitations
+- Phone calls + incoming-call modules are MOCKED (no real telephony)
+- Google OAuth full handshake cannot be tested in this preview (redirect_uri is locked to a different preview domain)
 
-### Long-term Memory
-Auto-extracted facts across 8 categories injected into Nova's system prompt for every future chat.
-
-### Goals / Reminders
-Track active goals with progress bars; conditional reminders surfaced into Nova's context.
-
-### Daily Briefing
-Pull-to-refresh card with:
-- Greeting + remembered name.
-- Weather (Open-Meteo via GPS).
-- Pending reminders, active goals with progress, upcoming dates from memories.
-- **Upcoming Google Calendar events** (when connected).
-- **Recent Gmail inbox** (subject / sender / snippet, unread markers).
-- **Connect Google** button — opens the consent flow inside the app (`expo-web-browser`).
-
-## Backend API (prefix `/api`)
-- `GET /` — model info
-- Sessions, Chat, Transcribe (as before)
-- Memories, Goals, Reminders (as before)
-- Briefing: `GET /briefing?lat=&lon=&tz_offset=`
-- **Google**: `GET /google/auth-url`, `GET /google/callback?code=`, `GET /google/status`, `POST /google/disconnect`
-- **Gmail**: `GET /gmail/recent?limit=`, `POST /gmail/send` `{to, subject, body}`
-- **Calendar**: `GET /calendar/upcoming?limit=`, `POST /calendar/events` `{summary, start_iso, end_iso, description}`
-
-## Stack
-- Frontend: Expo SDK 54, expo-router, expo-audio, expo-speech, expo-image-picker, expo-location, expo-blur, expo-web-browser.
-- Backend: FastAPI, Motor (MongoDB), httpx.
-- AI: `amazon.nova-lite-v1:0` (chat + vision + intent extraction + memory extraction), OpenAI `whisper-1` for STT.
-
-## Persistence
-MongoDB collections: `chat_sessions`, `chat_messages`, `memories`, `goals`, `reminders`, `integrations`. Active session id cached locally. No `_id` leaks.
-
-## Auth & OAuth
-Single-user app. Google OAuth flow stores `{access_token, refresh_token, expires_at, email, name}` in the `integrations` collection under `id="google"`. Tokens auto-refresh on every API call when the access token has < 60s remaining.
-
-## Permissions
-iOS: `NSMicrophoneUsageDescription`, `NSLocationWhenInUseUsageDescription`. Android: `RECORD_AUDIO`, `ACCESS_*_LOCATION`.
-
-## Design
-"Glass / Luxe DARK" — antique-gold accents (#E1B168) on deep charcoal, Fraunces display serif.
-
-## Code & deploy
-- Push to GitHub via the Emergent UI's **Save to GitHub** button (top-right of the workspace).
-- Publish via the **Publish** button to generate iOS/Android builds.
+## Next action items / Backlog
+- Wire Google OAuth redirect to current preview domain OR add a settings UI to re-register at runtime
+- Real telephony (Twilio) for phone-calls module
+- Persist `image_mime` on ChatMessage so history replay doesn't hardcode image/jpeg
+- Allow `/api/calls/{id}/cancel` to accept `in_progress` calls
