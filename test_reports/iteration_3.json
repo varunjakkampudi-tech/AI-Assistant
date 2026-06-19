@@ -1,0 +1,56 @@
+{
+  "summary": "Phase 2 end-to-end testing. Added /app/backend/tests/test_nova_phase2.py with 37 new tests covering Chat emotion classification, Daily Briefing (Chennai), smart-reminder auto-creation via chat, Google OAuth endpoints (URL/status/me), Voice (ElevenLabs status/tts/voices), Notifications ingest+stats, Finance Brain (process-notification/spending-summary/insights/categories), Dashboard (combined + 4 sub-endpoints), Knowledge Vault (upload/list/search/stats/delete), Phone Calls mock (create/list/get/cancel), Incoming-calls mock + missed-call reminder, Digital Twin (profile/learn/style-prompt), Chief of Staff (morning-briefing/suggestions), Calendar graceful-no-Google path, and Chat with Tools. All 37 new tests pass; combined with prior 33 tests => 70/70 backend tests green (~32s). Frontend home loads correctly at the preview URL (title 'Nova AI', subtitle 'AMAZON NOVA LITE', greeting 'How may I help today?', placeholder 'Message Nova…', quick-prompt chips, mic + image buttons). However, the chat send flow could not be exercised via Playwright: pressing Enter in the input does NOT submit (no /api/chat POST is fired), and clicking the up-arrow send icon by coordinate also did not trigger a request. Backend /api/chat works fine when called directly (verified by all chat tests passing).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/twin/profile", "issue": "First call (when user_profile doc does not exist yet) returns 500 with 'ObjectId object is not iterable'. Root cause: digital_twin.get_profile() in /app/backend/digital_twin.py (L200-212) calls insert_one(profile) which mutates the dict to add a Mongo _id, then returns the same dict without stripping _id. Subsequent calls hit the else branch and correctly delete _id, so the bug is only observable on the very first invocation. Fix: del profile['_id'] (or use profile.pop('_id', None)) right after the insert_one call too."},
+      {"endpoint": "/api/calls/{id}/cancel", "issue": "Cancel only succeeds when call status is in ['pending','scheduled']. The mock progress loop can flip a freshly-created call to in_progress/completed within a couple of seconds, so cancel returns 400. Either snapshot the cancellable window longer or accept 'in_progress' as cancellable. Not blocking — test now creates a scheduled call to work around this."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Home chat input (app/index.tsx)", "issue": "Pressing Enter in the 'Message Nova…' text input does not submit the message (no /api/chat network request fires). Multi-line TextInput likely has no onSubmitEditing / blurOnSubmit handler. Users without a mouse cannot send via keyboard.", "selector": "input[placeholder='Message Nova…']", "priority": "MEDIUM"},
+      {"component": "Home chat send button", "issue": "Programmatic click on the up-arrow send button by coordinate did not fire /api/chat in headless Playwright. The button has no data-testid, making automated testing fragile. Recommend adding data-testid='chat-send-button', data-testid='chat-input', and data-testid='chat-mic-button' to /app/frontend/app/index.tsx so future automated tests can reliably target them.", "selector": "(no testid)", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nova_phase2.py",
+    "/app/backend/tests/test_nova_phase1.py",
+    "/app/backend/tests/test_nova_api.py",
+    "/app/test_reports/pytest/pytest_phase2.xml",
+    "/app/test_reports/pytest/pytest_all.xml"
+  ],
+  "action_items": [
+    "FIX: digital_twin.get_profile() — strip MongoDB _id from the dict after the initial insert_one() (currently only stripped in the else branch). Causes a 500 on first ever /api/twin/profile call.",
+    "FIX (UX): add Enter-to-send to the chat input on app/index.tsx (TextInput onSubmitEditing or web onKeyDown handler), and add data-testid attributes to chat-input / chat-send-button / chat-mic-button to make UI automation reliable.",
+    "Optional: allow /api/calls/{id}/cancel to also accept 'in_progress' calls, or expose a 'schedule_now' that delays auto-progression until first /cancel window passes.",
+    "Optional: persist image_mime on ChatMessage so history replay to Bedrock doesn't hardcode image/jpeg (already noted in iteration_2)."
+  ],
+  "critical_code_review_comments": [
+    "Phase 2 endpoints across briefing, voice, notifications, finance, dashboard, knowledge, calls, incoming-calls, twin, chief — all return clean JSON with no MongoDB _id leakage (verified by recursive _no_mongo_id() assertion on every response).",
+    "ElevenLabs integration working: /api/voice/status reports enabled, /api/voice/tts returns sizable audio_base64 (>>100 chars), voice list returns array.",
+    "Google OAuth /auth-url builds a valid accounts.google.com URL containing client_id; /google/status returns {connected:false}; /me returns 401 — all as expected for the unauthenticated state.",
+    "Notification rule-based classification correctly tags an HDFC debit SMS as kind='transaction', extracts amount=500.0 and merchant='Swiggy'.",
+    "Smart-reminder auto-creation from a chat message ('Remind me to submit TEST_reimb_X after certification approval') worked — reminder appeared in /api/reminders within ~3s of the chat call returning. Confirms _extract_and_execute_action runs synchronously and creates a Reminder row.",
+    "Emotion classifier returned a value from the allowed set {neutral, frustrated, urgent, excited, sad} on a frustration prompt — wired up on user_message correctly.",
+    "Daily briefing returns integrations.voice.enabled=true with ElevenLabs configured. Pending reminders / active goals are real DB-driven counts.",
+    "Knowledge vault upload->list->search->delete cycle is consistent; response shape is {documents:[...], total:N} for list — not a flat list (minor consistency nit but documented).",
+    "Phone-call and incoming-call modules are clearly marked as MOCKED in the request and the implementation matches that (no real telephony).",
+    "BUG (digital_twin.py L200-212): first-call 500 due to ObjectId not stripped after insert_one — see action items."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nova_phase2.py (new — 37 Phase 2 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (70/70 across test_nova_api.py + test_nova_phase1.py + test_nova_phase2.py)",
+    "frontend": "Home screen loads correctly; chat send via UI could not be triggered (Enter-to-send not wired and no data-testid on send button) — backend chat verified independently."
+  },
+  "test_credentials": "No auth required for any tested endpoint. Google OAuth callback cannot be completed in this preview (redirect_uri belongs to a different domain) — only /api/google/auth-url and /api/google/status verified.",
+  "seed_data_creation": "All test data prefixed with TEST_ (sessions, knowledge docs, call purposes, smart-reminder unique tokens). Notifications, finance entries, twin learning data and missed-call reminders are written through normal endpoints; the existing module-scope cleanup fixture in conftest does not target every collection, so the DB may accumulate a small amount of TEST_-prefixed rows on repeated runs (acceptable).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 pytest at /app/backend/tests/test_nova_phase2.py — extend rather than replace. The Twin profile bug only surfaces on a completely fresh DB (before any GET /api/twin/profile has ever been called). To reproduce: drop the user_profile collection, then GET /api/twin/profile -> 500. Frontend chat send must be tested by either (a) main agent adding Enter-to-send + data-testids on app/index.tsx, or (b) testing agent locating the send icon by its SVG path / aria-label rather than coordinate. The Google OAuth full handshake CANNOT be tested here — the registered redirect_uri belongs to a different preview domain (ai-chat-mobile-64.preview.emergentagent.com).",
+  "rca_of_issue": "Twin profile 500: /app/backend/digital_twin.py get_profile() does `await db.user_profile.insert_one(profile)` which mutates the local `profile` dict to add `_id: ObjectId(...)`. The function then returns `profile` as-is. FastAPI's jsonable_encoder cannot serialize ObjectId, so the request fails with 500 ('ObjectId object is not iterable'). On every subsequent call the document already exists, the else branch runs `del profile['_id']`, and the response succeeds — which is why the bug is invisible after the first call."
+}
