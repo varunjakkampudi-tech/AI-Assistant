@@ -15,10 +15,13 @@ interface Item {
 
 const ITEMS: Item[] = [
   { icon: "sunny-outline", label: "Daily briefing", route: "/briefing", testID: "menu-briefing" },
+  { icon: "rocket-outline", label: "Chief of Staff", route: "/chief", testID: "menu-chief" },
   { icon: "chatbubbles-outline", label: "Conversations", route: "/history", testID: "menu-history" },
   { icon: "sparkles-outline", label: "Memories", route: "/memories", testID: "menu-memories" },
+  { icon: "person-circle-outline", label: "Digital Twin", route: "/twin", testID: "menu-twin" },
   { icon: "trophy-outline", label: "Goals", route: "/goals", testID: "menu-goals" },
   { icon: "alarm-outline", label: "Reminders", route: "/reminders", testID: "menu-reminders" },
+  { icon: "wallet-outline", label: "Finance Brain", route: "/finance", testID: "menu-finance" },
   { icon: "analytics-outline", label: "Dashboard", route: "/dashboard", testID: "menu-dashboard" },
   { icon: "library-outline", label: "Knowledge Vault", route: "/knowledge", testID: "menu-knowledge" },
   { icon: "call-outline", label: "AI Calls", route: "/calls", testID: "menu-calls" },

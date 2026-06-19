@@ -289,4 +289,54 @@ export const api = {
     jfetch<{ ok: boolean }>(`/missed-calls/${reminder_id}/dismiss`, { method: "POST" }),
   markCalledBack: (reminder_id: string) =>
     jfetch<{ ok: boolean }>(`/missed-calls/${reminder_id}/called-back`, { method: "POST" }),
+
+  // ==================== PERSONAL FINANCE BRAIN ====================
+
+  financeProcessNotification: (title: string, text: string, app_name = "") =>
+    jfetch<any>("/finance/process-notification", {
+      method: "POST",
+      body: JSON.stringify({ title, text, app_name }),
+    }),
+  financeSpendingSummary: (days = 30) =>
+    jfetch<any>(`/finance/spending-summary?days=${days}`),
+  financeInsights: (days = 30) => jfetch<any[]>(`/finance/insights?days=${days}`),
+  financeCategories: (days = 30) => jfetch<any>(`/finance/categories?days=${days}`),
+  financeRecurring: () => jfetch<any[]>("/finance/recurring"),
+
+  // ==================== PERSONAL DIGITAL TWIN ====================
+
+  twinProfile: () => jfetch<any>("/twin/profile"),
+  twinLearn: (message: string, context = "chat") =>
+    jfetch<any>("/twin/learn", {
+      method: "POST",
+      body: JSON.stringify({ message, context }),
+    }),
+  twinContactInteraction: (contact_name: string, relationship = "unknown") =>
+    jfetch<any>("/twin/contact-interaction", {
+      method: "POST",
+      body: JSON.stringify({ contact_name, relationship }),
+    }),
+  twinLearnResponse: (context: string, response: string) =>
+    jfetch<any>("/twin/learn-response", {
+      method: "POST",
+      body: JSON.stringify({ context, response }),
+    }),
+  twinStylePrompt: () => jfetch<{ style_prompt: string }>("/twin/style-prompt"),
+  twinSuggestReply: (to_contact: string, context: string) =>
+    jfetch<{ suggestion: string | null }>("/twin/suggest-reply", {
+      method: "POST",
+      body: JSON.stringify({ to_contact, context }),
+    }),
+  twinUpdatePriorities: (priorities: Record<string, number>) =>
+    jfetch<any>("/twin/update-priorities", {
+      method: "POST",
+      body: JSON.stringify({ priorities }),
+    }),
+
+  // ==================== AI CHIEF OF STAFF ====================
+
+  chiefMorningBriefing: (tz_offset = 0) =>
+    jfetch<any>(`/chief/morning-briefing?tz_offset=${tz_offset}`),
+  chiefSuggestions: (context = "") =>
+    jfetch<any[]>(`/chief/suggestions${context ? `?context=${encodeURIComponent(context)}` : ""}`),
 };
