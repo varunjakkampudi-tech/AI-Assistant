@@ -104,10 +104,6 @@ export default function ProfileSheet({ visible, onClose }: Props) {
           activeSessions: (secSess.sessions || []).length,
         });
       } catch { /* soft */ }
-      try {
-        const r = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/api/expo-qr`);
-        if (r.ok) setExpoInfo(await r.json());
-      } catch { /* soft */ }
     })();
   }, [visible, accessToken]);
 
@@ -180,7 +176,7 @@ export default function ProfileSheet({ visible, onClose }: Props) {
             )}
 
             {/* Expo QR card */}
-            {expoInfo && (
+            {false && expoInfo && (
               <View style={styles.expoCard} testID="profile-expo-qr">
                 <View style={styles.expoLeft}>
                   <Text style={styles.expoLabel}>OPEN ON PHONE</Text>
