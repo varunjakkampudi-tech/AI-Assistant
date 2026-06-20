@@ -764,7 +764,14 @@ async def prompt_publish(prompt_id: str, request: Request, actor: Dict[str, Any]
 @router.post("/prompts/{prompt_id}/rollback")
 async def prompt_rollback(prompt_id: str, request: Request, actor: Dict[str, Any] = Depends(require_super_admin)):
     """Promote a historical version back to 'published'."""
-    return await prompt_publish(prompt_id, request, actor)
+    db = get_db(request)
+    doc = await db.admin_prompts.find_one({"id": prompt_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Version not found")
+    await db.admin_prompts.update_many({"key": doc["key"], "mode": "published"}, {"$set": {"mode": "archived"}})
+    await db.admin_prompts.update_one({"id": prompt_id}, {"$set": {"mode": "published"}})
+    await audit(db, actor=actor, action="prompt.rollback", target=doc["key"], new={"version": doc["version"]}, ip=_client_ip(request))
+    return {"ok": True}
 
 
 @router.delete("/prompts/{prompt_id}")
