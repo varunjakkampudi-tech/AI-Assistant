@@ -437,7 +437,7 @@ LEGAL_BASE_STYLE = """\
   ul { padding-left:20px;}
 </style>"""
 
-LEGAL_FOOTER = "<hr/><p style='font-size:12px;color:#65656B;'>ORA OS · Your AI Operating System for Life · contact: support@oraos.app</p>"
+LEGAL_FOOTER = "<hr/><p style='font-size:12px;color:#65656B;'>ORA OS · AI Operating System for Life · contact: support@oraos.app</p>"
 
 
 @router.get("/legal/privacy", response_class=HTMLResponse)

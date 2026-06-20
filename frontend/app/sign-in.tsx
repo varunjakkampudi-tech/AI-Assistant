@@ -97,7 +97,7 @@ export default function SignInScreen() {
             <VoiceOrb active size={120} />
           </View>
           <Text style={styles.brand}>ORA OS</Text>
-          <Text style={styles.tagline}>Your AI Operating System for Life</Text>
+          <Text style={styles.tagline}>AI Operating System for Life</Text>
         </View>
 
         {stage === "method" && (

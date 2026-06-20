@@ -60,7 +60,7 @@ def _otp_html(code: str) -> str:
     Didn't request this? You can safely ignore this email — someone may have typed your address by mistake.
   </p>
 </td></tr></table>
-<div style="text-align:center;color:#444448;font-size:11px;margin-top:24px;">{APP_NAME} · Your AI Operating System for Life</div>
+<div style="text-align:center;color:#444448;font-size:11px;margin-top:24px;">{APP_NAME} · AI Operating System for Life</div>
 </body></html>"""
 
 

@@ -12,7 +12,7 @@ export default function Root({ children }: PropsWithChildren) {
           name="viewport"
           content="width=device-width, initial-scale=1, shrink-to-fit=no"
         />
-        <title>ORA OS — Your AI Operating System for Life</title>
+        <title>ORA OS — AI Operating System for Life</title>
         <meta name="description" content="ORA OS is a cinematic personal AI: daily briefings, finance tracking from Gmail, health logging, career copilot, timeline, memory, and voice chat in one beautifully dark, gold-glow app." />
         <meta name="keywords" content="AI assistant, personal AI, daily briefing, finance tracker, health tracker, career copilot, life dashboard, voice AI, ORA, ORA OS" />
         <meta name="theme-color" content="#0a0a0c" />

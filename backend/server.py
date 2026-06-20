@@ -1115,7 +1115,7 @@ async def google_callback(code: Optional[str] = None, error: Optional[str] = Non
                 """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
                 <div style="text-align:center;padding:32px;">
                   <div style="font-size:48px;color:#E1B168;">&#10003;</div>
-                  <h2 style="font-weight:400;">Signed in to Nova</h2>
+                  <h2 style="font-weight:400;">Signed in to ORA OS</h2>
                   <p style="color:#B4B4B8;">You can close this tab and return to the app.</p>
                   <script>setTimeout(function(){window.close()},1200);</script>
                 </div></body></html>"""
@@ -1129,7 +1129,7 @@ async def google_callback(code: Optional[str] = None, error: Optional[str] = Non
         <div style="text-align:center;padding:32px;">
           <div style="font-size:48px;color:#E1B168;">&#10003;</div>
           <h2 style="font-weight:400;">Google connected</h2>
-          <p style="color:#B4B4B8;">You can close this tab and return to Nova.</p>
+          <p style="color:#B4B4B8;">You can close this tab and return to ORA OS.</p>
           <script>setTimeout(function(){window.close()},1500);</script>
         </div></body></html>"""
     )
