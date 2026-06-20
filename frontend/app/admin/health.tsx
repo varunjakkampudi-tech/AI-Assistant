@@ -6,7 +6,15 @@ import { Page, Card, Section, Spinner, Stat, Grid, Badge, Button } from "@/src/a
 export default function HealthScreen() {
   const [data, setData] = useState<any | null>(null);
 
-  const load = async () => { try { setData(await adminFetch("/api/admin/health/snapshot")); } catch {} };
+  const load = async () => {
+    try {
+      const [snap, live] = await Promise.all([
+        adminFetch("/api/admin/health/snapshot"),
+        adminFetch("/api/admin/health/providers-live"),
+      ]);
+      setData({ ...snap, providers: live.providers });
+    } catch {}
+  };
   useEffect(() => {
     load();
     const i = setInterval(load, 30_000);

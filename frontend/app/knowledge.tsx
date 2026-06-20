@@ -16,6 +16,7 @@ import { useFocusEffect } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 
 import { theme } from "@/src/theme";
+import { FeatureGate } from "@/src/features";
 import { api } from "@/src/api";
 import ScreenHeader from "@/src/components/ScreenHeader";
 
@@ -40,6 +41,14 @@ interface SearchResult {
 }
 
 export default function KnowledgeScreen() {
+  return (
+    <FeatureGate feature="knowledge_vault">
+      <KnowledgeScreenInner />
+    </FeatureGate>
+  );
+}
+
+function KnowledgeScreenInner() {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);

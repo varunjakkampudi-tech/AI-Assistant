@@ -15,6 +15,7 @@ import { useFocusEffect } from "expo-router";
 import { theme } from "@/src/theme";
 import { api } from "@/src/api";
 import ScreenHeader from "@/src/components/ScreenHeader";
+import { FeatureGate } from "@/src/features";
 
 interface JournalEntry {
   id: string;
@@ -33,6 +34,14 @@ const MOOD_ICON: Record<string, keyof typeof import("@expo/vector-icons/Ionicons
 };
 
 export default function JournalScreen() {
+  return (
+    <FeatureGate feature="journal">
+      <JournalScreenInner />
+    </FeatureGate>
+  );
+}
+
+function JournalScreenInner() {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

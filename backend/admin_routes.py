@@ -1177,3 +1177,437 @@ async def bootstrap_defaults(db) -> None:
             "fallback_model_ids": [],
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
+
+
+
+# ==================== PHASE 4 — live routing, per-user analytics, finance, impersonation, infra ====================
+
+# ---- Per-user usage analytics ----
+@router.get("/users/{user_id}/usage")
+async def user_usage(user_id: str, request: Request, days: int = 30, user: Dict[str, Any] = Depends(require_admin)):
+    db = get_db(request)
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    since = (datetime.now(timezone.utc) - timedelta(days=max(1, min(days, 365)))).isoformat()
+    # Counts
+    counts: Dict[str, int] = {}
+    for k, coll, field in [
+        ("chat_sessions", "chat_sessions", "user_id"),
+        ("messages", "chat_messages", "user_id"),
+        ("memories", "memories", "user_id"),
+        ("documents", "knowledge_docs", "user_id"),
+        ("voice_calls", "phone_calls", "user_id"),
+        ("missed_calls", "missed_call_reminders", "user_id"),
+        ("journal_entries", "journal_entries", "user_id"),
+        ("goals", "goals", "user_id"),
+        ("reminders", "reminders", "user_id"),
+        ("applications", "career_applications", "user_id"),
+        ("transactions", "transactions", "user_id"),
+        ("calendar_events", "calendar_events", "user_id"),
+    ]:
+        try:
+            counts[k] = await db[coll].count_documents({field: user_id})
+        except Exception:
+            counts[k] = 0
+    # AI usage rolled up
+    pipe = [
+        {"$match": {"user_id": user_id, "created_at": {"$gte": since}}},
+        {"$group": {"_id": None,
+                       "requests": {"$sum": 1},
+                       "input_tokens": {"$sum": "$input_tokens"},
+                       "output_tokens": {"$sum": "$output_tokens"},
+                       "cost_usd": {"$sum": "$cost_usd"},
+                       "errors": {"$sum": {"$cond": ["$success", 0, 1]}}}},
+    ]
+    agg = await db.admin_ai_usage.aggregate(pipe).to_list(1)
+    a = agg[0] if agg else {}
+    ai_stats = {
+        "requests": int(a.get("requests", 0)),
+        "input_tokens": int(a.get("input_tokens", 0)),
+        "output_tokens": int(a.get("output_tokens", 0)),
+        "total_tokens": int(a.get("input_tokens", 0)) + int(a.get("output_tokens", 0)),
+        "cost_usd": round(float(a.get("cost_usd", 0.0)), 4),
+        "errors": int(a.get("errors", 0)),
+    }
+    # By-feature breakdown
+    feat_pipe = [
+        {"$match": {"user_id": user_id, "created_at": {"$gte": since}}},
+        {"$group": {"_id": "$feature", "requests": {"$sum": 1}, "cost_usd": {"$sum": "$cost_usd"}, "tokens": {"$sum": {"$add": ["$input_tokens", "$output_tokens"]}}}},
+        {"$sort": {"requests": -1}},
+    ]
+    by_feature = []
+    async for r in db.admin_ai_usage.aggregate(feat_pipe):
+        by_feature.append({"feature": r["_id"] or "unknown", "requests": r["requests"],
+                                  "cost_usd": round(float(r.get("cost_usd", 0.0)), 4),
+                                  "tokens": int(r.get("tokens", 0))})
+    # Storage estimate
+    storage_bytes = 0
+    try:
+        cur = db.knowledge_docs.aggregate([
+            {"$match": {"user_id": user_id}},
+            {"$group": {"_id": None, "bytes": {"$sum": {"$ifNull": ["$file_size", 0]}}}},
+        ])
+        row = await cur.to_list(1)
+        if row:
+            storage_bytes = int(row[0].get("bytes", 0))
+    except Exception:
+        pass
+    # Active sessions / last login / devices
+    sessions = await db.login_sessions.find({"user_id": user_id, "revoked": {"$ne": True}}, {"_id": 0}).sort("last_seen_at", -1).to_list(20)
+    last_seen = sessions[0]["last_seen_at"] if sessions else target.get("updated_at")
+    devices = list({(s.get("device_label") or "?") for s in sessions})
+
+    return {
+        "user": {
+            "id": target["id"], "email": target.get("email"), "name": target.get("name"),
+            "plan": target.get("plan"), "role": target.get("role"),
+            "status": target.get("status", "active"),
+            "created_at": target.get("created_at"),
+            "last_seen_at": last_seen,
+            "last_device": devices[0] if devices else None,
+            "devices": devices,
+        },
+        "counts": counts,
+        "ai": ai_stats,
+        "by_feature": by_feature,
+        "storage": {"bytes": storage_bytes, "mb": round(storage_bytes / 1024 / 1024, 2)},
+        "active_sessions": len(sessions),
+    }
+
+
+# ---- Finance intelligence: revenue / cost / margin ----
+@router.get("/finance/intelligence")
+async def finance_intelligence(request: Request, days: int = 30, user: Dict[str, Any] = Depends(require_admin)):
+    db = get_db(request)
+    days = max(7, min(days, 365))
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+
+    # Revenue from plans × user_count
+    plans = await db.admin_subscriptions.find({}, {"_id": 0}).to_list(50)
+    plan_price = {p["key"]: float(p.get("price_usd_monthly", 0.0)) for p in plans}
+    plan_dist: Dict[str, int] = {}
+    async for u in db.users.find({}, {"plan": 1}):
+        k = u.get("plan") or "free"
+        plan_dist[k] = plan_dist.get(k, 0) + 1
+    mrr = sum(plan_dist.get(k, 0) * v for k, v in plan_price.items())
+    revenue = round(mrr * (days / 30.0), 2)
+
+    # AI cost
+    cur = db.admin_ai_usage.aggregate([
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$group": {"_id": None, "cost": {"$sum": "$cost_usd"}}},
+    ])
+    rows = await cur.to_list(1)
+    ai_cost = round(float(rows[0]["cost"]) if rows else 0.0, 4)
+
+    # Storage cost — rough estimate from dbStats * $0.10/GB/mo
+    try:
+        st = await db.command("dbStats")
+        storage_gb = float(st.get("storageSize", 0)) / (1024 ** 3)
+    except Exception:
+        storage_gb = 0.0
+    storage_cost = round(storage_gb * 0.10 * (days / 30.0), 4)
+
+    # Voice cost — rough estimate $0.18/min from phone_calls.duration_sec
+    voice_pipe = [
+        {"$match": {"created_at": {"$gte": since}, "duration_sec": {"$exists": True}}},
+        {"$group": {"_id": None, "secs": {"$sum": "$duration_sec"}, "calls": {"$sum": 1}}},
+    ]
+    vrow = await db.phone_calls.aggregate(voice_pipe).to_list(1)
+    voice_secs = int(vrow[0]["secs"]) if vrow else 0
+    voice_calls = int(vrow[0]["calls"]) if vrow else 0
+    voice_cost = round((voice_secs / 60.0) * 0.18, 4)
+
+    total_cost = round(ai_cost + storage_cost + voice_cost, 4)
+    profit = round(revenue - total_cost, 4)
+    margin_pct = round(100.0 * profit / revenue, 2) if revenue > 0 else 0.0
+
+    # Time series
+    series = []
+    for i in range(days - 1, -1, -1):
+        day = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        nxt = day + timedelta(days=1)
+        cur2 = db.admin_ai_usage.aggregate([
+            {"$match": {"created_at": {"$gte": day.isoformat(), "$lt": nxt.isoformat()}}},
+            {"$group": {"_id": None, "cost": {"$sum": "$cost_usd"}}},
+        ])
+        rr = await cur2.to_list(1)
+        c = round(float(rr[0]["cost"]) if rr else 0.0, 4)
+        series.append({"date": day.date().isoformat(),
+                              "revenue": round(mrr / 30.0, 2), "cost": c,
+                              "profit": round(mrr / 30.0 - c, 4)})
+    return {
+        "window_days": days,
+        "revenue": revenue, "mrr": round(mrr, 2),
+        "ai_cost": ai_cost, "storage_cost": storage_cost, "voice_cost": voice_cost,
+        "total_cost": total_cost, "profit": profit, "margin_pct": margin_pct,
+        "voice": {"calls": voice_calls, "minutes": round(voice_secs / 60.0, 1)},
+        "plan_distribution": plan_dist, "plan_prices": plan_price,
+        "series": series,
+    }
+
+
+# ---- User-growth series (new + active per day) ----
+@router.get("/metrics/user-growth")
+async def user_growth(request: Request, days: int = 30, user: Dict[str, Any] = Depends(require_admin)):
+    db = get_db(request)
+    days = max(7, min(days, 365))
+    now = datetime.now(timezone.utc)
+    series = []
+    for i in range(days - 1, -1, -1):
+        day = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        nxt = day + timedelta(days=1)
+        n_new = await db.users.count_documents({"created_at": {"$gte": day.isoformat(), "$lt": nxt.isoformat()}})
+        active_ids = await db.login_sessions.distinct("user_id", {"last_seen_at": {"$gte": day.isoformat(), "$lt": nxt.isoformat()}})
+        churned = await db.users.count_documents({"updated_at": {"$gte": day.isoformat(), "$lt": nxt.isoformat()}, "status": {"$in": ["suspended", "banned"]}})
+        series.append({"date": day.date().isoformat(),
+                              "new_users": n_new, "active": len(active_ids), "churn": churned})
+    return {"series": series}
+
+
+# ---- AI usage heatmap (hour × day-of-week) ----
+@router.get("/metrics/usage-heatmap")
+async def usage_heatmap(request: Request, days: int = 30, user: Dict[str, Any] = Depends(require_admin)):
+    db = get_db(request)
+    days = max(7, min(days, 90))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    pipe = [
+        {"$match": {"created_at": {"$gte": since}}},
+        {"$project": {"d": {"$dateFromString": {"dateString": "$created_at"}}, "cost_usd": 1}},
+        {"$group": {
+            "_id": {"hour": {"$hour": "$d"}, "dow": {"$dayOfWeek": "$d"}},
+            "requests": {"$sum": 1},
+            "cost": {"$sum": "$cost_usd"},
+        }},
+    ]
+    # 7 (Sun..Sat) × 24 grid
+    grid = [[0 for _ in range(24)] for _ in range(7)]
+    cost_grid = [[0.0 for _ in range(24)] for _ in range(7)]
+    async for r in db.admin_ai_usage.aggregate(pipe):
+        dow = int(r["_id"]["dow"]) - 1  # 1..7 -> 0..6
+        h = int(r["_id"]["hour"])
+        grid[dow][h] = int(r["requests"])
+        cost_grid[dow][h] = round(float(r["cost"]), 4)
+    return {"grid": grid, "cost_grid": cost_grid, "rows": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]}
+
+
+# ---- Live provider health (real ping) ----
+@router.get("/health/providers-live")
+async def providers_live(request: Request, user: Dict[str, Any] = Depends(require_admin)):
+    import httpx
+    import time
+    db = get_db(request)
+    providers = await db.admin_ai_providers.find({}, {"_id": 0}).to_list(100)
+    out: List[Dict[str, Any]] = []
+    timeout = httpx.Timeout(4.0, connect=2.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as http:
+        for p in providers:
+            name = p.get("name")
+            url = None
+            if name == "bedrock":
+                region = p.get("region") or os.environ.get("AWS_REGION", "us-east-1")
+                url = f"https://bedrock-runtime.{region}.amazonaws.com"
+            elif name == "openai":
+                url = "https://api.openai.com/v1/models"
+            elif name == "anthropic":
+                url = "https://api.anthropic.com/v1/models"
+            elif name == "gemini":
+                url = "https://generativelanguage.googleapis.com/"
+            elif name == "azure":
+                url = p.get("endpoint") or None
+            elif name == "groq":
+                url = "https://api.groq.com/openai/v1/models"
+            elif name == "deepseek":
+                url = "https://api.deepseek.com"
+            elif name == "ollama":
+                url = p.get("endpoint") or "http://localhost:11434"
+            status = "unknown"
+            latency = None
+            detail = ""
+            if not p.get("enabled"):
+                status = "disabled"
+            elif not url:
+                status = "warning"
+                detail = "no endpoint configured"
+            else:
+                try:
+                    t0 = time.perf_counter()
+                    r = await http.get(url)
+                    latency = int((time.perf_counter() - t0) * 1000)
+                    # Many endpoints respond 401/403 without creds — that still means the service is up
+                    if r.status_code < 500:
+                        status = "healthy"
+                        detail = f"HTTP {r.status_code}"
+                    else:
+                        status = "critical"
+                        detail = f"HTTP {r.status_code}"
+                except Exception as e:
+                    status = "critical"
+                    detail = str(e)[:140]
+            out.append({"name": name, "label": p.get("label"), "enabled": p.get("enabled", False),
+                              "status": status, "latency_ms": latency, "detail": detail,
+                              "url": url})
+    return {"providers": out, "checked_at": datetime.now(timezone.utc).isoformat()}
+
+
+# ---- Infrastructure (CPU / memory / disk / DB / latency) ----
+@router.get("/infrastructure")
+async def infrastructure(request: Request, user: Dict[str, Any] = Depends(require_admin)):
+    import time
+    db = get_db(request)
+    info: Dict[str, Any] = {"checked_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        import psutil  # type: ignore
+        cpu_pct = psutil.cpu_percent(interval=0.2)
+        vm = psutil.virtual_memory()
+        du = psutil.disk_usage("/")
+        load = list(getattr(psutil, "getloadavg", lambda: (0, 0, 0))())
+        info["cpu"] = {"percent": cpu_pct, "count": psutil.cpu_count(), "load_avg": load}
+        info["memory"] = {"percent": vm.percent, "used_mb": int(vm.used / 1024 / 1024), "total_mb": int(vm.total / 1024 / 1024)}
+        info["disk"] = {"percent": du.percent, "used_gb": round(du.used / 1024 / 1024 / 1024, 2), "total_gb": round(du.total / 1024 / 1024 / 1024, 2)}
+    except Exception as e:
+        info["cpu"] = {"error": str(e)}
+        info["memory"] = {}
+        info["disk"] = {}
+    # DB ping latency
+    try:
+        t0 = time.perf_counter()
+        await db.command("ping")
+        info["database"] = {"status": "healthy", "ping_ms": int((time.perf_counter() - t0) * 1000)}
+        stats = await db.command("dbStats")
+        info["database"]["objects"] = stats.get("objects", 0)
+        info["database"]["data_size_mb"] = round(float(stats.get("dataSize", 0)) / 1024 / 1024, 2)
+        info["database"]["storage_size_mb"] = round(float(stats.get("storageSize", 0)) / 1024 / 1024, 2)
+    except Exception as e:
+        info["database"] = {"status": "critical", "error": str(e)}
+    # Redis (best-effort) — not configured here but check env
+    redis_url = os.environ.get("REDIS_URL")
+    info["redis"] = {"configured": bool(redis_url), "status": "not_configured" if not redis_url else "unknown"}
+    # API latency proxy — sample last 50 ai_usage rows
+    cur = db.admin_ai_usage.find({}, {"_id": 0, "latency_ms": 1}).sort("created_at", -1).limit(100)
+    lat_list = [r["latency_ms"] async for r in cur if r.get("latency_ms")]
+    if lat_list:
+        lat_list.sort()
+        info["api_latency_ms"] = {
+            "samples": len(lat_list),
+            "p50": lat_list[len(lat_list) // 2],
+            "p95": lat_list[int(len(lat_list) * 0.95)] if len(lat_list) > 1 else lat_list[-1],
+            "max": lat_list[-1],
+        }
+    else:
+        info["api_latency_ms"] = {"samples": 0}
+    return info
+
+
+# ---- User impersonation (super-admin only) ----
+class ImpersonateBody(BaseModel):
+    reason: str = "support"
+    duration_minutes: int = 60
+
+
+@router.post("/users/{user_id}/impersonate")
+async def impersonate(user_id: str, body: ImpersonateBody, request: Request, actor: Dict[str, Any] = Depends(require_super_admin)):
+    db = get_db(request)
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    sanitized = auth_mod._sanitize(target)
+    sanitized["impersonated_by"] = actor.get("id")
+    sanitized["impersonated_by_email"] = actor.get("email")
+    tokens = auth_mod.issue_tokens(sanitized)
+    ua = (request.headers.get("user-agent") or "")[:300]
+    ip = _client_ip(request)
+    await sec.create_session(db, user_id=target["id"], refresh_jti=tokens["refresh_jti"], ip=ip, user_agent=ua)
+    await audit(db, actor=actor, action="user.impersonated", target=user_id,
+                  new={"reason": body.reason, "duration_min": body.duration_minutes, "target_email": target.get("email")},
+                  ip=ip, user_agent=ua)
+    return {
+        "ok": True,
+        "user": {k: target.get(k) for k in ("id", "email", "name", "plan", "role", "status")},
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+        "token_type": "bearer",
+        "impersonated_by": actor.get("email"),
+    }
+
+
+# ---- Login alerts (last N login events with new_country/new_device flags) ----
+@router.get("/security/login-alerts")
+async def login_alerts(request: Request, days: int = 7, user: Dict[str, Any] = Depends(require_admin)):
+    db = get_db(request)
+    since = (datetime.now(timezone.utc) - timedelta(days=max(1, min(days, 90)))).isoformat()
+    rows = await db.audit_events.find(
+        {"event": {"$in": ["login.email_otp", "login.google", "admin.login"]},
+          "created_at": {"$gte": since}},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(200).to_list(200)
+    # tag each row with flags
+    out = []
+    seen_pairs: set = set()
+    seen_countries: set = set()
+    for r in rows:
+        uid = r.get("user_id")
+        dev = (r.get("meta") or {}).get("device_label") or r.get("device_label") or "?"
+        country = (r.get("meta") or {}).get("country") or "?"
+        pair = (uid, dev)
+        new_device = pair not in seen_pairs
+        new_country = (uid, country) not in seen_countries and country != "?"
+        seen_pairs.add(pair)
+        seen_countries.add((uid, country))
+        out.append({**r, "new_device": new_device, "new_country": new_country})
+    return {"items": out}
+
+
+# ==================== PUBLIC FEATURE FLAGS (consumed by end-user clients) ====================
+
+# This sub-router is exposed at /api/features/* (no admin auth required).
+public_router = APIRouter()
+
+
+def _hash_bucket(s: str) -> int:
+    """Stable 0-99 bucket for percentage rollouts."""
+    import hashlib
+    return int(hashlib.md5((s or "").encode()).hexdigest(), 16) % 100
+
+
+@public_router.get("/public")
+async def features_for_current_user(request: Request):
+    """Returns {feature_key: enabled_bool} for the calling user.
+    Anonymous callers get the public defaults. Authenticated callers get
+    per-user evaluation that honors percentage rollout, audience, and status.
+    """
+    db = get_db(request)
+    user: Optional[Dict[str, Any]] = None
+    try:
+        user = await auth_mod.current_user(request, db)
+    except Exception:
+        user = None
+    rows = await db.admin_feature_flags.find({}, {"_id": 0}).to_list(200)
+    result: Dict[str, Any] = {}
+    uid = (user or {}).get("id") or request.client.host if request.client else "anon"
+    plan = (user or {}).get("plan") or "free"
+    role = (user or {}).get("role") or "user"
+    for f in rows:
+        key = f["key"]
+        status = f.get("status", "enabled")
+        pct = int(f.get("rollout_pct", 100) or 0)
+        audience = f.get("audience") or []
+        enabled = False
+        if status == "enabled":
+            enabled = True
+        elif status == "disabled":
+            enabled = False
+        elif status == "internal":
+            enabled = role in ("admin", "super_admin")
+        elif status == "beta":
+            enabled = role in ("admin", "super_admin", "beta") or "beta" in audience or plan in audience
+        elif status == "rollout":
+            in_audience = (plan in audience) or (uid in audience) or role in ("admin", "super_admin")
+            enabled = in_audience or (_hash_bucket(f"{key}:{uid}") < pct)
+        # Audience override always wins (if specific uid included)
+        if uid and uid in audience:
+            enabled = True
+        result[key] = enabled
+    return {"features": result, "evaluated_for": (user or {}).get("id"), "plan": plan}

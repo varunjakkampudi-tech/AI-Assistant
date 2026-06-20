@@ -18,6 +18,7 @@ import { useFocusEffect } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 
 import { theme } from "@/src/theme";
+import { FeatureGate } from "@/src/features";
 import { api } from "@/src/api";
 import ScreenHeader from "@/src/components/ScreenHeader";
 
@@ -59,6 +60,14 @@ function scoreColor(s?: number | null): string {
 }
 
 export default function CareerScreen() {
+  return (
+    <FeatureGate feature="career_copilot">
+      <CareerScreenInner />
+    </FeatureGate>
+  );
+}
+
+function CareerScreenInner() {
   const [tab, setTab] = useState<Tab>("discover");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);

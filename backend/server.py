@@ -190,8 +190,73 @@ class ReminderUpdate(BaseModel):
 
 
 # ------------------- Bedrock helpers -------------------
-async def _bedrock_converse(messages: List[dict], system_text: str, max_tokens: int = 800, temperature: float = 0.6) -> str:
-    """Generic Bedrock Converse call. messages is a list of {role, content:[{text}|{image}]}."""
+# Cache of active model id per feature to avoid hitting Mongo on every call.
+_MODEL_CACHE: Dict[str, tuple] = {}  # feature -> (model_id, expires_at_epoch)
+_MODEL_CACHE_TTL = 15.0  # seconds
+
+
+async def _active_model_for(feature: str) -> str:
+    """Return the model_id configured for a feature via admin_feature_models, with 15s cache.
+    Falls back to BEDROCK_MODEL_ID env var if no override is set."""
+    import time as _time
+    now = _time.monotonic()
+    entry = _MODEL_CACHE.get(feature)
+    if entry and entry[1] > now:
+        return entry[0]
+    model_id = BEDROCK_MODEL_ID
+    try:
+        doc = await db.admin_feature_models.find_one({"feature": feature}, {"_id": 0, "primary_model_id": 1})
+        if doc and doc.get("primary_model_id"):
+            model_id = doc["primary_model_id"]
+    except Exception as e:
+        logger.warning("active_model_for(%s) failed: %s", feature, e)
+    _MODEL_CACHE[feature] = (model_id, now + _MODEL_CACHE_TTL)
+    return model_id
+
+
+# Per-Bedrock model cost (USD per 1k tokens). Conservative public list pricing for Bedrock; can be edited via admin.
+_BEDROCK_COST = {
+    "amazon.nova-micro-v1:0":   {"in": 0.000035, "out": 0.00014},
+    "amazon.nova-lite-v1:0":    {"in": 0.00006,  "out": 0.00024},
+    "amazon.nova-pro-v1:0":     {"in": 0.0008,   "out": 0.0032},
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": {"in": 0.003, "out": 0.015},
+}
+
+
+def _estimate_cost(model_id: str, input_tokens: int, output_tokens: int) -> float:
+    p = _BEDROCK_COST.get(model_id, {"in": 0.0001, "out": 0.0004})
+    return round((input_tokens * p["in"] + output_tokens * p["out"]) / 1000.0, 6)
+
+
+async def _log_ai_usage(*, provider: str, model_id: str, feature: str, user_id: Optional[str],
+                              input_tokens: int, output_tokens: int, latency_ms: int,
+                              success: bool, error: Optional[str] = None) -> None:
+    try:
+        cost = _estimate_cost(model_id, input_tokens, output_tokens) if success else 0.0
+        await db.admin_ai_usage.insert_one({
+            "id": str(uuid.uuid4()),
+            "provider": provider, "model_id": model_id, "feature": feature,
+            "user_id": user_id,
+            "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
+            "latency_ms": int(latency_ms),
+            "cost_usd": cost,
+            "success": bool(success),
+            "error": error,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logger.warning("ai_usage insert failed: %s", e)
+
+
+async def _bedrock_converse(messages: List[dict], system_text: str, max_tokens: int = 800,
+                                  temperature: float = 0.6, *, feature: str = "chat",
+                                  user_id: Optional[str] = None) -> str:
+    """Generic Bedrock Converse call. Model is selected at runtime from admin_feature_models.
+    Per-call usage (tokens, latency, cost) is logged to db.admin_ai_usage so the admin
+    dashboards stay live. messages is a list of {role, content:[{text}|{image}]}."""
+    import time as _time
+    model_id = await _active_model_for(feature)
+    url = f"https://bedrock-runtime.{AWS_REGION}.amazonaws.com/model/{model_id}/converse"
     payload = {
         "messages": messages,
         "system": [{"text": system_text}],
@@ -201,18 +266,56 @@ async def _bedrock_converse(messages: List[dict], system_text: str, max_tokens: 
         "Content-Type": "application/json",
         "Authorization": f"Bearer {AWS_BEARER_TOKEN_BEDROCK}",
     }
-    async with httpx.AsyncClient(timeout=60.0) as http:
-        r = await http.post(BEDROCK_URL, json=payload, headers=headers)
-        if r.status_code != 200:
-            logger.error("Bedrock error %s: %s", r.status_code, r.text)
-            raise HTTPException(status_code=502, detail=f"Bedrock error: {r.text[:300]}")
-        data = r.json()
+    started = _time.perf_counter()
+    in_tokens = out_tokens = 0
     try:
-        parts = data["output"]["message"]["content"]
-        return "".join(p.get("text", "") for p in parts).strip()
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            r = await http.post(url, json=payload, headers=headers)
+            if r.status_code != 200:
+                logger.error("Bedrock error %s: %s", r.status_code, r.text)
+                await _log_ai_usage(provider="bedrock", model_id=model_id, feature=feature, user_id=user_id,
+                                            input_tokens=0, output_tokens=0,
+                                            latency_ms=int((_time.perf_counter() - started) * 1000),
+                                            success=False, error=r.text[:300])
+                raise HTTPException(status_code=502, detail=f"Bedrock error: {r.text[:300]}")
+            data = r.json()
+        try:
+            parts = data["output"]["message"]["content"]
+            text_out = "".join(p.get("text", "") for p in parts).strip()
+        except Exception as e:
+            logger.exception("Bedrock parse failed: %s", data)
+            await _log_ai_usage(provider="bedrock", model_id=model_id, feature=feature, user_id=user_id,
+                                        input_tokens=0, output_tokens=0,
+                                        latency_ms=int((_time.perf_counter() - started) * 1000),
+                                        success=False, error=str(e)[:300])
+            raise HTTPException(status_code=502, detail=f"Bedrock parse error: {e}")
+        # Token usage from response (Bedrock provides it under "usage")
+        usage = data.get("usage") or {}
+        in_tokens = int(usage.get("inputTokens", 0) or 0)
+        out_tokens = int(usage.get("outputTokens", 0) or 0)
+        await _log_ai_usage(provider="bedrock", model_id=model_id, feature=feature, user_id=user_id,
+                                  input_tokens=in_tokens, output_tokens=out_tokens,
+                                  latency_ms=int((_time.perf_counter() - started) * 1000),
+                                  success=True)
+        return text_out
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Bedrock parse failed: %s", data)
-        raise HTTPException(status_code=502, detail=f"Bedrock parse error: {e}")
+        await _log_ai_usage(provider="bedrock", model_id=model_id, feature=feature, user_id=user_id,
+                                  input_tokens=0, output_tokens=0,
+                                  latency_ms=int((_time.perf_counter() - started) * 1000),
+                                  success=False, error=str(e)[:300])
+        raise
+
+
+async def _bedrock_career(*args, **kwargs):
+    kwargs.setdefault("feature", "career")
+    return await _bedrock_converse(*args, **kwargs)
+
+
+async def _bedrock_briefing(*args, **kwargs):
+    kwargs.setdefault("feature", "daily_briefing")
+    return await _bedrock_converse(*args, **kwargs)
 
 
 def _msg_block(role: str, text: str, image_b64: Optional[str] = None, image_mime: Optional[str] = None) -> dict:
@@ -277,6 +380,7 @@ async def _classify_emotion(user_text: str) -> str:
             system_text=EMOTION_INSTRUCTIONS,
             max_tokens=10,
             temperature=0.0,
+            feature="emotion",
         )
         label = (out or "").strip().lower().strip(".,!?\"'")
         if label not in {"neutral", "frustrated", "urgent", "excited", "sad"}:
@@ -322,6 +426,7 @@ async def _extract_and_store_memories(session_id: str, user_text: str, assistant
             system_text=EXTRACTION_INSTRUCTIONS,
             max_tokens=400,
             temperature=0.1,
+            feature="memory",
         )
         items = _safe_json_array(out)
         for it in items:
@@ -436,7 +541,7 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
     # Run emotion classification and main reply in parallel
     import asyncio
     emotion_task = asyncio.create_task(_classify_emotion(body.message))
-    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6)
+    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6, feature="chat")
     emotion = await emotion_task
 
     # Try to execute any clear action the user just requested (calendar, email, reminder, whatsapp)
@@ -845,6 +950,7 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
             system_text=ACTION_INSTRUCTIONS,
             max_tokens=300,
             temperature=0.0,
+            feature="action",
         )
         obj = _safe_json_object(raw)
         action = (obj.get("action") or "none").lower()
@@ -919,6 +1025,7 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
                         system_text="You write short replies that mimic the user's voice.",
                         max_tokens=180,
                         temperature=0.5,
+                        feature="voice",
                     )
                     suggestion = (suggestion or "").strip().strip('"').strip()
                 if suggestion:
@@ -1007,6 +1114,7 @@ async def _classify_notification(title: str, text: str) -> dict:
             system_text=TX_EXTRACTION_INSTRUCTIONS,
             max_tokens=200,
             temperature=0.0,
+            feature="finance_brain",
         )
         return _safe_json_object(raw) or {"kind": "other"}
     except Exception:
@@ -1260,7 +1368,7 @@ async def chat_with_tools(body: ChatWithToolsRequest, background: BackgroundTask
     emotion_task = asyncio.create_task(_classify_emotion(body.message))
     
     # Get initial AI response
-    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=1200, temperature=0.6)
+    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=1200, temperature=0.6, feature="chat")
     emotion = await emotion_task
 
     tool_calls = []
@@ -1291,7 +1399,7 @@ async def chat_with_tools(body: ChatWithToolsRequest, background: BackgroundTask
             bedrock_msgs.append(_msg_block("user", f"[Tool Result]: {tool_result_text}\n\nNow provide a natural response to the user based on this result."))
             
             # Get AI's response to the tool result
-            reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6)
+            reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6, feature="chat")
             
             # Check if AI wants to call another tool
             tool_call = tool_framework.extract_tool_call(reply)
@@ -2070,7 +2178,7 @@ async def generate_journal(date: Optional[str] = None, tz_offset: int = 0, overw
     twin = get_digital_twin()
     style = await twin.get_style_prompt()
     entry = await journal_mod.generate_journal_for_date(
-        db, date, timeline, style, _bedrock_converse, overwrite=overwrite,
+        db, date, timeline, style, _bedrock_briefing, overwrite=overwrite,
     )
     return entry
 
@@ -2239,7 +2347,7 @@ async def career_jobs_ingest_url(body: JobUrlIngest):
         raw_text=parsed.get("raw_text") or "",
     )
     try:
-        scored = await career_mod.score_job(db, job["id"], _bedrock_converse)
+        scored = await career_mod.score_job(db, job["id"], _bedrock_career)
         job["match_score"] = scored["score"]
         job["match_breakdown"] = {k: scored[k] for k in ("strengths", "gaps", "recommendation", "rationale", "scored_at")}
     except Exception as e:
@@ -2262,7 +2370,7 @@ async def career_jobs_manual(body: JobManualIngest):
         title=body.title, company=body.company, location=body.location, raw_text=body.raw_text,
     )
     try:
-        scored = await career_mod.score_job(db, job["id"], _bedrock_converse)
+        scored = await career_mod.score_job(db, job["id"], _bedrock_career)
         job["match_score"] = scored["score"]
         job["match_breakdown"] = {k: scored[k] for k in ("strengths", "gaps", "recommendation", "rationale", "scored_at")}
     except Exception:
@@ -2286,7 +2394,7 @@ async def career_jobs_delete(job_id: str):
 @api_router.post("/career/jobs/{job_id}/score")
 async def career_jobs_rescore(job_id: str):
     try:
-        return await career_mod.score_job(db, job_id, _bedrock_converse)
+        return await career_mod.score_job(db, job_id, _bedrock_career)
     except ValueError as e:
         raise HTTPException(404, str(e))
 
@@ -2300,7 +2408,7 @@ async def career_generate(job_id: str, body: ArtifactKindReq):
     try:
         twin = get_digital_twin()
         style = await twin.get_style_prompt()
-        return await career_mod.generate_artifact(db, job_id, body.kind, _bedrock_converse, style_prompt=style)
+        return await career_mod.generate_artifact(db, job_id, body.kind, _bedrock_career, style_prompt=style)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -2347,7 +2455,7 @@ async def career_boards_replace(body: BoardsReplace):
 
 @api_router.post("/career/sync")
 async def career_sync(auto_score: bool = True, max_per_board: int = 30):
-    return await career_mod.sync_boards(db, _bedrock_converse,
+    return await career_mod.sync_boards(db, _bedrock_career,
                                         auto_score=auto_score, max_per_board=max_per_board)
 
 
@@ -2408,6 +2516,7 @@ async def career_parse_resume(file: UploadFile = File(...)):
         system_msg,
         max_tokens=2400,
         temperature=0.2,
+        feature="career",
     )
     parsed = career_mod._safe_json_object(raw_json)
     if not parsed:
@@ -2470,7 +2579,7 @@ async def career_job_apply(job_id: str):
     artifacts: Dict[str, Any] = {}
     for kind in ("resume", "cover_letter"):
         try:
-            a = await career_mod.generate_artifact(db, job_id, kind, _bedrock_converse, style_prompt=style)
+            a = await career_mod.generate_artifact(db, job_id, kind, _bedrock_career, style_prompt=style)
             artifacts[kind] = a
         except Exception as e:
             logger.warning("apply: %s gen failed: %s", kind, e)
@@ -2701,6 +2810,7 @@ async def expo_go_page():
 app.include_router(api_router)
 app.include_router(auth_routes_mod.router, prefix="/api")
 app.include_router(admin_routes_mod.router, prefix="/api/admin")
+app.include_router(admin_routes_mod.public_router, prefix="/api/features")
 
 
 async def _resolve_expo_tunnel_url() -> str:
@@ -2802,6 +2912,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/install",
     "/api/support/faq",
     "/api/admin/login",
+    "/api/features/public",
     "/docs", "/openapi.json", "/redoc",
 )
 

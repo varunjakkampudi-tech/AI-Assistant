@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
+import { FeatureGate } from "@/src/features";
 import { api } from "@/src/api";
 import ScreenHeader from "@/src/components/ScreenHeader";
 
@@ -35,6 +36,14 @@ interface PhoneCall {
 }
 
 export default function CallsScreen() {
+  return (
+    <FeatureGate feature="ai_calls">
+      <CallsScreenInner />
+    </FeatureGate>
+  );
+}
+
+function CallsScreenInner() {
   const [calls, setCalls] = useState<PhoneCall[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);

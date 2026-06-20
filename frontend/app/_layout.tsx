@@ -9,6 +9,7 @@ import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth, useColors } from "@/src/auth";
+import { FeaturesProvider } from "@/src/features";
 import { setApiToken } from "@/src/api";
 import { theme as baseTheme } from "@/src/theme";
 
@@ -90,9 +91,11 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AuthProvider>
-          <AuthGate>
-            <ThemedStack />
-          </AuthGate>
+          <FeaturesProvider>
+            <AuthGate>
+              <ThemedStack />
+            </AuthGate>
+          </FeaturesProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

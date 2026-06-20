@@ -18,6 +18,7 @@ import * as Location from "expo-location";
 import * as WebBrowser from "expo-web-browser";
 
 import { theme } from "@/src/theme";
+import { FeatureGate } from "@/src/features";
 import { api, Goal, Memory, Reminder } from "@/src/api";
 import ScreenHeader from "@/src/components/ScreenHeader";
 
@@ -55,6 +56,14 @@ function weatherIcon(code?: number): keyof typeof Ionicons.glyphMap {
 }
 
 export default function BriefingScreen() {
+  return (
+    <FeatureGate feature="daily_briefing">
+      <BriefingScreenInner />
+    </FeatureGate>
+  );
+}
+
+function BriefingScreenInner() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -5,6 +5,7 @@ import { COLORS, adminMe, adminLogout } from "@/src/admin/api";
 
 const NAV = [
   { href: "/admin", label: "Executive Dashboard", icon: "📊" },
+  { href: "/admin/finance", label: "Finance Intelligence", icon: "💰" },
   { href: "/admin/users", label: "Users", icon: "👥" },
   { href: "/admin/ai-models", label: "AI Model Control", icon: "🧠" },
   { href: "/admin/costs", label: "Cost Center", icon: "💸" },
@@ -16,7 +17,8 @@ const NAV = [
   { href: "/admin/audit", label: "Audit Log", icon: "🧾" },
   { href: "/admin/notifications", label: "Notifications", icon: "📣" },
   { href: "/admin/config", label: "Configuration", icon: "⚙️" },
-  { href: "/admin/health", label: "System Health", icon: "💚" },
+  { href: "/admin/health", label: "Provider Health", icon: "💚" },
+  { href: "/admin/infrastructure", label: "Infrastructure", icon: "🖥️" },
   { href: "/admin/support", label: "Support Tickets", icon: "🎫" },
 ];
 
