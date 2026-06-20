@@ -32,7 +32,6 @@ const SECTIONS: { label: string; items: Item[] }[] = [
     items: [
       { icon: "wallet-outline", label: "Finance Brain", sub: "Spending, income, recurring", route: "/finance", testID: "menu-finance" },
       { icon: "briefcase-outline", label: "Career Copilot", sub: "Resume, jobs, auto-apply", route: "/career", testID: "menu-career" },
-      { icon: "analytics-outline", label: "Dashboard", sub: "Everything at a glance", route: "/dashboard", testID: "menu-dashboard" },
     ],
   },
   {

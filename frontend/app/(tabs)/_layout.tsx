@@ -22,6 +22,7 @@ const TABS: TabConfig[] = [
   { name: "index", label: "Home", icon: "home-outline", iconFocused: "home", testID: "tab-home" },
   { name: "timeline", label: "Timeline", icon: "menu-outline", iconFocused: "menu", testID: "tab-timeline" },
   { name: "ask", label: "Ask", icon: "sparkles", iconFocused: "sparkles", testID: "tab-ask" },
+  { name: "dashboard", label: "Dashboard", icon: "stats-chart-outline", iconFocused: "stats-chart", testID: "tab-dashboard" },
   { name: "vault", label: "Vault", icon: "albums-outline", iconFocused: "albums", testID: "tab-vault" },
 ];
 
@@ -116,6 +117,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="timeline" options={{ title: "Timeline" }} />
       <Tabs.Screen name="ask" options={{ title: "Ask" }} />
+      <Tabs.Screen name="dashboard" options={{ title: "Dashboard" }} />
       <Tabs.Screen name="vault" options={{ title: "Vault" }} />
     </Tabs>
   );

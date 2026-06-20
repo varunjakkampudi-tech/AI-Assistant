@@ -91,7 +91,7 @@ export default function DashboardScreen() {
 
   return (
     <View style={styles.root} testID="dashboard-screen">
-      <ScreenHeader title="Dashboard" />
+      <ScreenHeader title="Dashboard" showBack={false} />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={

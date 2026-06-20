@@ -120,6 +120,17 @@ export default function HomeScreen() {
       <SafeAreaView edges={["top"]} style={{ backgroundColor: c.surface }}>
         <View style={styles.topBar}>
           <Pressable
+            style={styles.iconBtn}
+            onPress={() => setShowMenu(true)}
+            hitSlop={10}
+            testID="home-menu-button"
+          >
+            <Ionicons name="menu" size={20} color={c.onSurface} />
+          </Pressable>
+          <View style={styles.brandWrap} pointerEvents="none">
+            <Text style={styles.brandWord} testID="home-brand">ORA OS</Text>
+          </View>
+          <Pressable
             style={styles.avatarBtn}
             onPress={() => setShowProfile(true)}
             testID="home-avatar-button"
@@ -130,17 +141,6 @@ export default function HomeScreen() {
             >
               <Text style={styles.avatarInitial} testID="home-avatar-initial">{initial}</Text>
             </LinearGradient>
-          </Pressable>
-          <View style={styles.brandWrap} pointerEvents="none">
-            <Text style={styles.brandWord} testID="home-brand">ORA OS</Text>
-          </View>
-          <Pressable
-            style={styles.iconBtn}
-            onPress={() => setShowMenu(true)}
-            hitSlop={10}
-            testID="home-menu-button"
-          >
-            <Ionicons name="menu" size={20} color={c.onSurface} />
           </Pressable>
         </View>
       </SafeAreaView>
@@ -270,6 +270,7 @@ const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
   topBar: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: theme.spacing.lg,
     paddingVertical: theme.spacing.sm,
   },
