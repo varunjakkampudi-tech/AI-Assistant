@@ -250,7 +250,7 @@ export default function HomeScreen() {
           <ActivityIndicator color={c.brand} style={{ marginTop: 16 }} />
         )}
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: 140 }} />
       </ScrollView>
       <ProfileSheet visible={showProfile} onClose={() => setShowProfile(false)} />
       <MenuSheet visible={showMenu} onClose={() => setShowMenu(false)} />
@@ -294,7 +294,7 @@ const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
     letterSpacing: 4,
     fontWeight: "600",
   },
-  scroll: { paddingHorizontal: theme.spacing.lg, paddingBottom: 120 },
+  scroll: { paddingHorizontal: theme.spacing.lg, paddingBottom: 160 },
   greetingWrap: { marginTop: theme.spacing.md, marginBottom: theme.spacing.lg },
   greetingRow: { flexDirection: "row", alignItems: "center" },
   greetingText: {

@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   chipText: { color: theme.color.onSurface, fontSize: 13, fontWeight: "500" },
   chipTextActive: { color: theme.color.onBrand, fontWeight: "700" },
-  content: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.md, paddingBottom: theme.spacing.xxxl },
+  content: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.md, paddingBottom: 160 },
   loader: { paddingVertical: theme.spacing.xxxl, alignItems: "center" },
   empty: { alignItems: "center", paddingVertical: theme.spacing.xxxl, gap: 8 },
   emptyTitle: { color: theme.color.onSurface, fontSize: 16, fontWeight: "500" },
