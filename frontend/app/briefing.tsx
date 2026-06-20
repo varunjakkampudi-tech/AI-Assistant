@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   Platform,
   Linking,
+  Modal,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
@@ -56,6 +58,9 @@ export default function BriefingScreen() {
   const [data, setData] = useState<BriefingData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openEmail, setOpenEmail] = useState<any | null>(null);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [trashing, setTrashing] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -135,6 +140,54 @@ export default function BriefingScreen() {
       setError(`Disconnect failed: ${e?.message || e}`);
     }
   }, [load]);
+
+  const viewEmail = useCallback(async (id: string) => {
+    setEmailLoading(true);
+    setOpenEmail({ id, loading: true });
+    try {
+      const full = await api.gmailGet(id);
+      setOpenEmail(full);
+    } catch (e: any) {
+      setOpenEmail(null);
+      Alert.alert("Couldn't load email", e?.message || "");
+    } finally {
+      setEmailLoading(false);
+    }
+  }, []);
+
+  const trashEmail = useCallback(async (id: string) => {
+    setTrashing(id);
+    try {
+      await api.gmailTrash(id);
+      // Remove from local list
+      setData((d) =>
+        d ? { ...d, recent_emails: (d.recent_emails || []).filter((e) => e.id !== id) } : d,
+      );
+      if (openEmail?.id === id) setOpenEmail(null);
+    } catch (e: any) {
+      Alert.alert(
+        "Couldn't delete",
+        e?.message?.includes("403")
+          ? "Reconnect Google to grant inbox-management access."
+          : e?.message || "",
+      );
+    } finally {
+      setTrashing(null);
+    }
+  }, [openEmail]);
+
+  const confirmTrash = useCallback((id: string, subject: string) => {
+    if (Platform.OS === "web") {
+      // Alert.alert with buttons doesn't render on web in Expo — use confirm
+      // eslint-disable-next-line no-alert
+      if (window.confirm(`Move "${subject}" to Trash?`)) trashEmail(id);
+      return;
+    }
+    Alert.alert("Move to Trash?", subject, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => trashEmail(id) },
+    ]);
+  }, [trashEmail]);
 
   const greetingLine = data
     ? data.name
@@ -348,7 +401,16 @@ export default function BriefingScreen() {
                   <Text style={styles.cardEmpty}>Inbox is clear.</Text>
                 ) : (
                   (data.recent_emails || []).map((em) => (
-                    <View key={em.id} style={styles.lineItem}>
+                    <Pressable
+                      key={em.id}
+                      style={({ pressed }) => [
+                        styles.lineItem,
+                        styles.lineItemPressable,
+                        pressed && { opacity: 0.6 },
+                      ]}
+                      onPress={() => viewEmail(em.id)}
+                      testID={`briefing-email-${em.id}`}
+                    >
                       <View style={[styles.dot, em.unread && { backgroundColor: theme.color.brand }]} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.lineText} numberOfLines={1}>
@@ -358,7 +420,20 @@ export default function BriefingScreen() {
                           {em.from.replace(/<.*>/, "").trim()} · {em.snippet.slice(0, 60)}
                         </Text>
                       </View>
-                    </View>
+                      <Pressable
+                        hitSlop={8}
+                        onPress={(e) => { e.stopPropagation?.(); confirmTrash(em.id, em.subject); }}
+                        disabled={trashing === em.id}
+                        style={styles.inlineTrash}
+                        testID={`briefing-email-trash-${em.id}`}
+                      >
+                        {trashing === em.id ? (
+                          <ActivityIndicator size="small" color={theme.color.onSurfaceSecondary} />
+                        ) : (
+                          <Ionicons name="trash-outline" size={16} color={theme.color.onSurfaceSecondary} />
+                        )}
+                      </Pressable>
+                    </Pressable>
                   ))
                 )}
               </View>
@@ -406,6 +481,70 @@ export default function BriefingScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* Email detail modal */}
+      <Modal
+        visible={!!openEmail}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setOpenEmail(null)}
+      >
+        <View style={styles.modalRoot} testID="email-detail-modal">
+          <View style={styles.modalCard}>
+            <View style={styles.modalHead}>
+              <Text style={styles.modalTitle} numberOfLines={2}>
+                {openEmail?.subject || "Email"}
+              </Text>
+              <Pressable
+                onPress={() => setOpenEmail(null)}
+                hitSlop={8}
+                testID="email-detail-close"
+              >
+                <Ionicons name="close" size={22} color={theme.color.onSurface} />
+              </Pressable>
+            </View>
+            {openEmail?.loading || emailLoading ? (
+              <ActivityIndicator color={theme.color.brand} style={{ marginVertical: 32 }} />
+            ) : (
+              <>
+                <Text style={styles.modalMeta} numberOfLines={1}>
+                  From: {openEmail?.from || ""}
+                </Text>
+                {!!openEmail?.date && (
+                  <Text style={styles.modalMeta}>{openEmail.date}</Text>
+                )}
+                <ScrollView style={{ maxHeight: 360 }}>
+                  <Text style={styles.modalBody}>{openEmail?.body || openEmail?.snippet || ""}</Text>
+                </ScrollView>
+                <View style={styles.modalActions}>
+                  <Pressable
+                    style={[styles.modalBtn, styles.modalBtnGhost]}
+                    onPress={() => setOpenEmail(null)}
+                    testID="email-detail-dismiss"
+                  >
+                    <Text style={styles.modalBtnGhostText}>Close</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.modalBtn, styles.modalBtnDanger]}
+                    onPress={() => openEmail?.id && confirmTrash(openEmail.id, openEmail.subject || "this email")}
+                    disabled={!!trashing}
+                    testID="email-detail-trash"
+                  >
+                    {trashing === openEmail?.id ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="trash" size={14} color="#fff" />
+                        <Text style={styles.modalBtnDangerText}>Move to Trash</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -479,5 +618,82 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brandTertiary,
     alignItems: "center",
     justifyContent: "center",
+  },
+  lineItemPressable: {
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  inlineTrash: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+  modalRoot: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: theme.color.surface,
+    padding: theme.spacing.lg,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    gap: theme.spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.brandSecondary,
+  },
+  modalHead: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: theme.spacing.md,
+  },
+  modalTitle: {
+    flex: 1,
+    color: theme.color.onSurface,
+    fontFamily: theme.font.display,
+    fontSize: 18,
+  },
+  modalMeta: {
+    color: theme.color.onSurfaceSecondary,
+    fontSize: 12,
+  },
+  modalBody: {
+    color: theme.color.onSurface,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: theme.spacing.sm,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing.sm,
+    marginTop: theme.spacing.md,
+  },
+  modalBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: theme.radius.pill,
+  },
+  modalBtnGhost: {
+    backgroundColor: theme.color.surfaceSecondary,
+  },
+  modalBtnGhostText: {
+    color: theme.color.onSurface,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  modalBtnDanger: {
+    backgroundColor: "#b91c1c",
+  },
+  modalBtnDangerText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

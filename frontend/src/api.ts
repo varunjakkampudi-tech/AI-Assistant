@@ -182,6 +182,18 @@ export const api = {
     jfetch<any[]>(`/notifications${kind ? `?kind=${kind}` : ""}`),
   deleteNotification: (id: string) =>
     jfetch<{ ok: boolean }>(`/notifications/${id}`, { method: "DELETE" }),
+  clearNotifications: (kind?: string) =>
+    jfetch<{ ok: boolean; deleted: number }>(
+      `/notifications${kind ? `?kind=${kind}` : ""}`,
+      { method: "DELETE" },
+    ),
+
+  // Gmail
+  gmailRecent: (limit = 10) =>
+    jfetch<{ messages: any[] }>(`/gmail/recent?limit=${limit}`),
+  gmailGet: (id: string) => jfetch<any>(`/gmail/messages/${id}`),
+  gmailTrash: (id: string) =>
+    jfetch<{ id: string; trashed: boolean }>(`/gmail/messages/${id}`, { method: "DELETE" }),
 
   // ==================== NEW FEATURES ====================
 

@@ -29,6 +29,7 @@ SCOPES = [
     "profile",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify",  # for trash/delete
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
@@ -234,6 +235,53 @@ async def search_messages_full(token: str, query: str, max_results: int = 50) ->
         return out
 
 
+
+
+async def get_message_full(token: str, msg_id: str) -> dict:
+    """Fetch a single Gmail message with full body."""
+    async with httpx.AsyncClient(timeout=20.0) as http:
+        r = await http.get(
+            f"{GMAIL_BASE}/messages/{msg_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"format": "full"},
+        )
+        if r.status_code == 404:
+            raise HTTPException(404, "Message not found")
+        if r.status_code != 200:
+            raise HTTPException(502, f"Gmail get failed: {r.text[:200]}")
+        data = r.json()
+        payload = data.get("payload", {}) or {}
+        headers = {h["name"]: h["value"] for h in payload.get("headers", []) or []}
+        return {
+            "id": msg_id,
+            "thread_id": data.get("threadId"),
+            "from": headers.get("From", ""),
+            "to": headers.get("To", ""),
+            "subject": headers.get("Subject", "(no subject)"),
+            "date": headers.get("Date", ""),
+            "snippet": data.get("snippet", ""),
+            "body": _extract_body_text(payload) or data.get("snippet", ""),
+            "unread": "UNREAD" in (data.get("labelIds") or []),
+        }
+
+
+async def trash_message(token: str, msg_id: str) -> dict:
+    """Move a Gmail message to Trash (recoverable for 30 days). Needs gmail.modify."""
+    async with httpx.AsyncClient(timeout=20.0) as http:
+        r = await http.post(
+            f"{GMAIL_BASE}/messages/{msg_id}/trash",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if r.status_code == 404:
+            raise HTTPException(404, "Message not found")
+        if r.status_code == 403:
+            raise HTTPException(
+                403,
+                "Gmail permission denied. Reconnect Google so ORA can manage your inbox.",
+            )
+        if r.status_code != 200:
+            raise HTTPException(502, f"Gmail trash failed: {r.text[:200]}")
+        return {"id": msg_id, "trashed": True}
 
 
 async def send_email(token: str, to: str, subject: str, body: str) -> dict:

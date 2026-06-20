@@ -20,6 +20,7 @@ const SECTIONS: { label: string; items: Item[] }[] = [
     label: "DAILY",
     items: [
       { icon: "sunny-outline", label: "Daily briefing", sub: "Morning headlines + your calendar", route: "/briefing", testID: "menu-briefing" },
+      { icon: "notifications-outline", label: "Notifications", sub: "Bank alerts, missed pings, mock pushes", route: "/notifications", testID: "menu-notifications" },
       { icon: "rocket-outline", label: "Chief of Staff", sub: "Smart priorities & nudges", route: "/chief", testID: "menu-chief" },
       { icon: "pulse-outline", label: "Life OS", sub: "Habits, streaks, energy", route: "/life", testID: "menu-life" },
       { icon: "alarm-outline", label: "Reminders", sub: "Tasks & smart nudges", route: "/reminders", testID: "menu-reminders" },

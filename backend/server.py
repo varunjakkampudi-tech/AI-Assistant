@@ -1053,6 +1053,16 @@ async def delete_notification(nid: str):
     return {"ok": True}
 
 
+@api_router.delete("/notifications")
+async def clear_notifications(kind: Optional[str] = None):
+    """Clear all notifications (or all of a given kind)."""
+    q: dict = {}
+    if kind:
+        q["kind"] = kind
+    res = await db.notifications.delete_many(q)
+    return {"ok": True, "deleted": res.deleted_count}
+
+
 @api_router.post("/google/disconnect")
 async def google_disconnect():
     await db.integrations.delete_one({"id": "google"})
@@ -1131,6 +1141,25 @@ async def gmail_recent(limit: int = 5):
     if not token:
         raise HTTPException(401, "Google not connected")
     return {"messages": await gh.list_recent_messages(token, max_results=limit)}
+
+
+@api_router.get("/gmail/messages/{msg_id}")
+async def gmail_get_message(msg_id: str):
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected")
+    return await gh.get_message_full(token, msg_id)
+
+
+@api_router.delete("/gmail/messages/{msg_id}")
+async def gmail_delete_message(msg_id: str):
+    """Move a Gmail message to Trash. Requires the gmail.modify scope —
+    if the user connected Google before this scope was added, the request
+    returns 403 and they must reconnect."""
+    token = await gh.get_valid_token(db)
+    if not token:
+        raise HTTPException(401, "Google not connected")
+    return await gh.trash_message(token, msg_id)
 
 
 class SendEmailReq(BaseModel):
