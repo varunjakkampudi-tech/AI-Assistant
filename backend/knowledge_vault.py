@@ -132,7 +132,8 @@ async def process_document(
     content: bytes,
     filename: str,
     content_type: str,
-    db
+    db,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Process and store a document in the knowledge vault."""
     
@@ -162,11 +163,12 @@ async def process_document(
     doc_id = str(uuid.uuid4())
     doc = {
         "id": doc_id,
+        "user_id": user_id,
         "title": Path(filename).stem,
         "filename": filename,
         "file_type": file_type,
         "content_type": content_type,
-        "content": text[:50000],  # Store first 50k chars for quick access
+        "content": text[:50000],
         "full_text_length": len(text),
         "chunk_count": len(chunks),
         "chunks": chunks,
@@ -177,11 +179,10 @@ async def process_document(
     
     await db.knowledge_docs.insert_one(doc)
     
-    # Ensure text index exists
     try:
         await db.knowledge_docs.create_index([("content", "text"), ("title", "text"), ("chunks.text", "text")])
     except Exception:
-        pass  # Index might already exist
+        pass
     
     return {
         "success": True,
@@ -196,41 +197,35 @@ async def process_document(
     }
 
 
-async def search_documents(query: str, db, limit: int = 5) -> List[Dict[str, Any]]:
-    """Search documents using MongoDB text search."""
+async def search_documents(query: str, db, limit: int = 5, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Search documents using MongoDB text search, scoped to the signed-in user."""
     results = []
-    
+    scope = {"user_id": user_id} if user_id else {}
     try:
-        # Try text search first
         cursor = db.knowledge_docs.find(
-            {"$text": {"$search": query}},
+            {**scope, "$text": {"$search": query}},
             {"score": {"$meta": "textScore"}, "_id": 0}
         ).sort([("score", {"$meta": "textScore"})]).limit(limit)
-        
         results = await cursor.to_list(limit)
     except Exception as e:
         logger.warning(f"Text search failed: {e}")
     
     if not results:
-        # Fallback to regex search
         regex = {"$regex": query, "$options": "i"}
         cursor = db.knowledge_docs.find(
-            {"$or": [{"content": regex}, {"title": regex}]},
+            {**scope, "$or": [{"content": regex}, {"title": regex}]},
             {"_id": 0}
         ).limit(limit)
         results = await cursor.to_list(limit)
     
-    # Format results with relevant chunks
     formatted = []
     for doc in results:
-        # Find most relevant chunk
         best_chunk = None
         query_lower = query.lower()
         for chunk in doc.get("chunks", []):
             if query_lower in chunk.get("text", "").lower():
                 best_chunk = chunk
                 break
-        
         formatted.append({
             "id": doc.get("id"),
             "title": doc.get("title"),
@@ -244,34 +239,43 @@ async def search_documents(query: str, db, limit: int = 5) -> List[Dict[str, Any
     return formatted
 
 
-async def get_document(doc_id: str, db) -> Optional[Dict[str, Any]]:
-    """Get a single document by ID."""
-    doc = await db.knowledge_docs.find_one({"id": doc_id}, {"_id": 0})
+async def get_document(doc_id: str, db, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Get a single document by ID, scoped to user."""
+    q = {"id": doc_id}
+    if user_id:
+        q["user_id"] = user_id
+    doc = await db.knowledge_docs.find_one(q, {"_id": 0})
     return doc
 
 
-async def list_documents(db, skip: int = 0, limit: int = 20) -> List[Dict[str, Any]]:
-    """List all documents in the knowledge vault."""
+async def list_documents(db, skip: int = 0, limit: int = 20, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List all documents in the knowledge vault for the signed-in user."""
+    q = {"user_id": user_id} if user_id else {}
     cursor = db.knowledge_docs.find(
-        {},
-        {"_id": 0, "chunks": 0, "content": 0}  # Exclude large fields
+        q,
+        {"_id": 0, "chunks": 0, "content": 0}
     ).sort("created_at", -1).skip(skip).limit(limit)
     
     docs = await cursor.to_list(limit)
     return docs
 
 
-async def delete_document(doc_id: str, db) -> bool:
-    """Delete a document from the knowledge vault."""
-    result = await db.knowledge_docs.delete_one({"id": doc_id})
+async def delete_document(doc_id: str, db, user_id: Optional[str] = None) -> bool:
+    """Delete a document from the knowledge vault (must be owned by the user)."""
+    q = {"id": doc_id}
+    if user_id:
+        q["user_id"] = user_id
+    result = await db.knowledge_docs.delete_one(q)
     return result.deleted_count > 0
 
 
-async def get_vault_stats(db) -> Dict[str, Any]:
-    """Get statistics about the knowledge vault."""
-    total_docs = await db.knowledge_docs.count_documents({})
+async def get_vault_stats(db, user_id: Optional[str] = None) -> Dict[str, Any]:
+    """Get statistics about the knowledge vault (per-user)."""
+    base_filter = {"user_id": user_id} if user_id else {}
+    total_docs = await db.knowledge_docs.count_documents(base_filter)
     
     pipeline = [
+        {"$match": base_filter},
         {"$group": {
             "_id": "$file_type",
             "count": {"$sum": 1},

@@ -55,16 +55,24 @@ async def build_day_timeline(
     tz_offset_minutes: int = 0,
     google_helper=None,
     google_token: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a chronological timeline for a single date."""
     start, end = _day_bounds(date_str, tz_offset_minutes)
     start_iso, end_iso = _iso(start), _iso(end)
 
+    def _u(extra: Dict[str, Any]) -> Dict[str, Any]:
+        """Add user_id filter when provided."""
+        out = dict(extra)
+        if user_id:
+            out["user_id"] = user_id
+        return out
+
     events: List[Dict[str, Any]] = []
 
     # --- Chat messages ---
     msgs = await db.chat_messages.find(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
     ).sort("created_at", 1).to_list(2000)
     chat_pairs: Dict[str, Dict[str, Any]] = {}
     for m in msgs:
@@ -103,7 +111,7 @@ async def build_day_timeline(
 
     # --- Reminders created / completed today ---
     rems_created = await db.reminders.find(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
     ).to_list(500)
     for r in rems_created:
         events.append({
@@ -130,7 +138,7 @@ async def build_day_timeline(
 
     # --- Goals created / progressed today ---
     goals_created = await db.goals.find(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
     ).to_list(500)
     for g in goals_created:
         events.append({
@@ -141,10 +149,10 @@ async def build_day_timeline(
             "at": g.get("created_at"),
             "ref_id": g.get("id"),
         })
-    goals_updated = await db.goals.find({
+    goals_updated = await db.goals.find(_u({
         "status": {"$in": ["completed", "active"]},
         "updated_at": {"$gte": start_iso, "$lt": end_iso}
-    }, {"_id": 0}).to_list(500)
+    }), {"_id": 0}).to_list(500)
     for g in goals_updated:
         if g.get("created_at") in (g.get("updated_at"), None):
             continue
@@ -186,7 +194,7 @@ async def build_day_timeline(
 
     # --- Calls (outbound + incoming) ---
     for call in await db.calls.find(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
     ).to_list(500):
         events.append({
             "kind": "call_out",
@@ -197,7 +205,7 @@ async def build_day_timeline(
             "ref_id": call.get("id"),
         })
     for call in await db.incoming_calls.find(
-        {"started_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+        _u({"started_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
     ).to_list(500):
         events.append({
             "kind": "call_in",
@@ -211,7 +219,7 @@ async def build_day_timeline(
     # --- Voice notes ---
     if "voice_notes" in await db.list_collection_names():
         for v in await db.voice_notes.find(
-            {"created_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+            _u({"created_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
         ).to_list(500):
             events.append({
                 "kind": "voice_note",
@@ -224,7 +232,7 @@ async def build_day_timeline(
 
     # --- Knowledge documents added ---
     for kd in await db.knowledge_documents.find(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
     ).to_list(500):
         events.append({
             "kind": "document",
@@ -238,7 +246,7 @@ async def build_day_timeline(
     # --- Health logs ---
     if "health_logs" in await db.list_collection_names():
         for h in await db.health_logs.find(
-            {"logged_at": {"$gte": start_iso, "$lt": end_iso}}, {"_id": 0}
+            _u({"logged_at": {"$gte": start_iso, "$lt": end_iso}}), {"_id": 0}
         ).to_list(500):
             events.append({
                 "kind": "health",
@@ -327,6 +335,7 @@ async def on_this_day(
     tz_offset_minutes: int = 0,
     google_helper=None,
     google_token: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """'Memory time machine': what happened today X months ago?"""
     today = datetime.now(timezone.utc) + timedelta(minutes=tz_offset_minutes)
@@ -346,7 +355,7 @@ async def on_this_day(
         else:
             target = datetime(year, month + 1, 1) - timedelta(days=1)
     return await build_day_timeline(
-        db, target.strftime("%Y-%m-%d"), tz_offset_minutes, google_helper, google_token
+        db, target.strftime("%Y-%m-%d"), tz_offset_minutes, google_helper, google_token, user_id=user_id,
     )
 
 
@@ -355,36 +364,43 @@ async def range_summary(
     from_date: str,
     to_date: str,
     tz_offset_minutes: int = 0,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Aggregate counts/totals across a date range (used for monthly views)."""
     start, _ = _day_bounds(from_date, tz_offset_minutes)
     _, end = _day_bounds(to_date, tz_offset_minutes)
     start_iso, end_iso = _iso(start), _iso(end)
 
+    def _u(extra: Dict[str, Any]) -> Dict[str, Any]:
+        out = dict(extra)
+        if user_id:
+            out["user_id"] = user_id
+        return out
+
     chat_msgs = await db.chat_messages.count_documents(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}, "role": "user"}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}, "role": "user"})
     )
     mems = await db.memories.count_documents(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}})
     )
     rems_done = await db.reminders.count_documents(
-        {"status": "done", "updated_at": {"$gte": start_iso, "$lt": end_iso}}
+        _u({"status": "done", "updated_at": {"$gte": start_iso, "$lt": end_iso}})
     )
     goals_completed = await db.goals.count_documents(
-        {"status": "completed", "updated_at": {"$gte": start_iso, "$lt": end_iso}}
+        _u({"status": "completed", "updated_at": {"$gte": start_iso, "$lt": end_iso}})
     )
     calls_out = await db.calls.count_documents(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}})
     )
     docs = await db.knowledge_documents.count_documents(
-        {"created_at": {"$gte": start_iso, "$lt": end_iso}}
+        _u({"created_at": {"$gte": start_iso, "$lt": end_iso}})
     )
 
     # Spend totals
     spent = 0.0
     received = 0.0
     async for n in db.notifications.find(
-        {"kind": "transaction", "posted_at": {"$gte": start_iso, "$lt": end_iso}},
+        _u({"kind": "transaction", "posted_at": {"$gte": start_iso, "$lt": end_iso}}),
         {"_id": 0, "amount": 1, "direction": 1},
     ):
         amt = n.get("amount") or 0

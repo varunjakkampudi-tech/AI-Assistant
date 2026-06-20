@@ -186,6 +186,7 @@ class FeatureFlagBody(BaseModel):
     status: Literal["enabled", "disabled", "beta", "internal", "rollout"] = "enabled"
     rollout_pct: int = 100
     audience: List[str] = []  # plan names or user ids
+    paused_reason: str = ""   # message shown to users when feature is paused/restricted
 
 
 class PromptBody(BaseModel):
@@ -800,6 +801,7 @@ async def features_upsert(body: FeatureFlagBody, request: Request, actor: Dict[s
         "status": body.status,
         "rollout_pct": max(0, min(100, body.rollout_pct)),
         "audience": body.audience,
+        "paused_reason": (body.paused_reason or "")[:300],
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "created_at": (prev or {}).get("created_at", datetime.now(timezone.utc).isoformat()),
     }
@@ -1586,6 +1588,7 @@ async def features_for_current_user(request: Request):
         user = None
     rows = await db.admin_feature_flags.find({}, {"_id": 0}).to_list(200)
     result: Dict[str, Any] = {}
+    reasons: Dict[str, str] = {}
     uid = (user or {}).get("id") or request.client.host if request.client else "anon"
     plan = (user or {}).get("plan") or "free"
     role = (user or {}).get("role") or "user"
@@ -1610,4 +1613,7 @@ async def features_for_current_user(request: Request):
         if uid and uid in audience:
             enabled = True
         result[key] = enabled
-    return {"features": result, "evaluated_for": (user or {}).get("id"), "plan": plan}
+        if not enabled and f.get("paused_reason"):
+            reasons[key] = f["paused_reason"]
+    return {"features": result, "reasons": reasons,
+            "evaluated_for": (user or {}).get("id"), "plan": plan}

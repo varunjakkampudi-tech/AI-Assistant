@@ -38,6 +38,7 @@ import auth_routes as auth_routes_mod
 import security as security_mod
 import admin_routes as admin_routes_mod
 import cost_intelligence as cost_intel
+import experiments as exp_mod
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -416,7 +417,7 @@ def _safe_json_array(text: str) -> List[dict]:
         return []
 
 
-async def _extract_and_store_memories(session_id: str, user_text: str, assistant_text: str) -> None:
+async def _extract_and_store_memories(session_id: str, user_text: str, assistant_text: str, uid: Optional[str] = None) -> None:
     try:
         prompt = (
             f"USER MESSAGE:\n{user_text}\n\nASSISTANT REPLY:\n{assistant_text}\n\n"
@@ -428,6 +429,7 @@ async def _extract_and_store_memories(session_id: str, user_text: str, assistant
             max_tokens=400,
             temperature=0.1,
             feature="memory",
+            user_id=uid,
         )
         items = _safe_json_array(out)
         for it in items:
@@ -444,11 +446,11 @@ async def _extract_and_store_memories(session_id: str, user_text: str, assistant
                 importance = 3
             importance = max(1, min(5, importance))
 
-            # Deduplicate: same category+subject — update content instead
-            existing = await db.memories.find_one({"category": cat, "subject": subj}, {"_id": 0})
+            # Deduplicate per-user: same category+subject for THIS user — update content
+            existing = await db.memories.find_one({"category": cat, "subject": subj, "user_id": uid}, {"_id": 0})
             if existing:
                 await db.memories.update_one(
-                    {"id": existing["id"]},
+                    {"id": existing["id"], "user_id": uid},
                     {"$set": {"content": content, "importance": importance, "created_at": utc_now_iso(), "source_session_id": session_id}},
                 )
             else:
@@ -459,9 +461,10 @@ async def _extract_and_store_memories(session_id: str, user_text: str, assistant
                     importance=importance,
                     source_session_id=session_id,
                 )
-                await db.memories.insert_one(mem.dict())
+                doc = mem.dict(); doc["user_id"] = uid
+                await db.memories.insert_one(doc)
         if items:
-            logger.info("Stored %d memories from session %s", len(items), session_id)
+            logger.info("Stored %d memories from session %s (user %s)", len(items), session_id, uid)
     except Exception as e:
         logger.warning("Memory extraction failed: %s", e)
 
@@ -472,64 +475,111 @@ async def root():
     return {"message": "ORA OS API", "model": BEDROCK_MODEL_ID}
 
 
+def _uid(request: Request) -> str:
+    """Return the authenticated user id from the auth middleware. 401 if missing."""
+    uid = getattr(request.state, "user_id", None) if request else None
+    if not uid:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return uid
+
+
+async def _own_google_token(uid: str) -> Optional[str]:
+    """Return a fresh Google access token belonging to `uid` (refreshing if needed)."""
+    doc = await db.user_integrations.find_one({"user_id": uid, "provider": "google"}, {"_id": 0})
+    if not doc:
+        return None
+    import time as _t
+    now = int(_t.time())
+    if doc.get("access_token") and now < (doc.get("expires_at", 0) - 60):
+        return doc["access_token"]
+    refresh = doc.get("refresh_token")
+    if not refresh:
+        return None
+    try:
+        new = await gh.refresh_access_token(refresh)
+    except Exception:
+        return None
+    access = new.get("access_token")
+    if not access:
+        return None
+    await db.user_integrations.update_one(
+        {"user_id": uid, "provider": "google"},
+        {"$set": {"access_token": access, "expires_at": now + int(new.get("expires_in", 3600))}},
+    )
+    return access
+
+
 # ----- Sessions -----
 @api_router.post("/sessions", response_model=ChatSession)
-async def create_session(body: CreateSessionRequest):
+async def create_session(body: CreateSessionRequest, request: Request):
+    uid = _uid(request)
     session = ChatSession(title=body.title or "New Chat")
-    await db.chat_sessions.insert_one(session.dict())
+    doc = session.dict()
+    doc["user_id"] = uid
+    await db.chat_sessions.insert_one(doc)
     return session
 
 
 @api_router.get("/sessions", response_model=List[ChatSession])
-async def list_sessions(search: Optional[str] = None):
-    query: dict = {}
+async def list_sessions(request: Request, search: Optional[str] = None):
+    uid = _uid(request)
+    query: dict = {"user_id": uid}
     if search and search.strip():
         query["title"] = {"$regex": re.escape(search.strip()), "$options": "i"}
     rows = await db.chat_sessions.find(query, {"_id": 0}).to_list(1000)
-    # Sort: pinned first, then updated_at desc
     rows.sort(key=lambda r: (not r.get("pinned", False), r.get("updated_at", "")), reverse=False)
     rows.sort(key=lambda r: (r.get("pinned", False), r.get("updated_at", "")), reverse=True)
     return [ChatSession(**r) for r in rows]
 
 
 @api_router.get("/sessions/{session_id}/messages", response_model=List[ChatMessage])
-async def get_messages(session_id: str):
-    rows = await db.chat_messages.find({"session_id": session_id}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+async def get_messages(session_id: str, request: Request):
+    uid = _uid(request)
+    # Ensure session is owned by user
+    sess = await db.chat_sessions.find_one({"id": session_id, "user_id": uid}, {"_id": 0})
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    rows = await db.chat_messages.find({"session_id": session_id, "user_id": uid}, {"_id": 0}).sort("created_at", 1).to_list(2000)
     return [ChatMessage(**r) for r in rows]
 
 
 @api_router.post("/sessions/{session_id}/pin", response_model=ChatSession)
-async def toggle_pin(session_id: str):
-    sess = await db.chat_sessions.find_one({"id": session_id}, {"_id": 0})
+async def toggle_pin(session_id: str, request: Request):
+    uid = _uid(request)
+    sess = await db.chat_sessions.find_one({"id": session_id, "user_id": uid}, {"_id": 0})
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
     new_val = not bool(sess.get("pinned", False))
-    await db.chat_sessions.update_one({"id": session_id}, {"$set": {"pinned": new_val, "updated_at": utc_now_iso()}})
+    await db.chat_sessions.update_one({"id": session_id, "user_id": uid}, {"$set": {"pinned": new_val, "updated_at": utc_now_iso()}})
     sess["pinned"] = new_val
     sess["updated_at"] = utc_now_iso()
     return ChatSession(**sess)
 
 
 @api_router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
-    await db.chat_sessions.delete_one({"id": session_id})
-    await db.chat_messages.delete_many({"session_id": session_id})
+async def delete_session(session_id: str, request: Request):
+    uid = _uid(request)
+    await db.chat_sessions.delete_one({"id": session_id, "user_id": uid})
+    await db.chat_messages.delete_many({"session_id": session_id, "user_id": uid})
     return {"ok": True}
 
 
 # ----- Chat -----
 @api_router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest, background: BackgroundTasks):
+async def chat(body: ChatRequest, background: BackgroundTasks, request: Request):
+    uid = _uid(request)
     if not body.message.strip() and not body.image_b64:
         raise HTTPException(status_code=400, detail="Empty message")
 
-    sess = await db.chat_sessions.find_one({"id": body.session_id}, {"_id": 0})
+    sess = await db.chat_sessions.find_one({"id": body.session_id, "user_id": uid}, {"_id": 0})
     if not sess:
         new_sess = ChatSession(id=body.session_id, title=(body.message or "New Chat")[:40])
-        await db.chat_sessions.insert_one(new_sess.dict())
+        doc = new_sess.dict()
+        doc["user_id"] = uid
+        await db.chat_sessions.insert_one(doc)
 
     history_rows = await db.chat_messages.find(
-        {"session_id": body.session_id}, {"_id": 0}
+        {"session_id": body.session_id, "user_id": uid}, {"_id": 0}
     ).sort("created_at", 1).to_list(2000)
 
     bedrock_msgs: List[dict] = []
@@ -542,11 +592,11 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
     # Run emotion classification and main reply in parallel
     import asyncio
     emotion_task = asyncio.create_task(_classify_emotion(body.message))
-    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6, feature="chat")
+    reply = await _bedrock_converse(bedrock_msgs, system_text=system_text, max_tokens=900, temperature=0.6, feature="chat", user_id=uid)
     emotion = await emotion_task
 
     # Try to execute any clear action the user just requested (calendar, email, reminder, whatsapp)
-    action_note, whatsapp_link = await _extract_and_execute_action(body.message)
+    action_note, whatsapp_link = await _extract_and_execute_action(body.message, uid=uid)
     if action_note:
         reply = (reply or "").rstrip() + action_note
 
@@ -563,16 +613,18 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
         content=reply,
         whatsapp_link=whatsapp_link,
     )
-    await db.chat_messages.insert_one(user_msg.dict())
-    await db.chat_messages.insert_one(ai_msg.dict())
+    user_doc = user_msg.dict(); user_doc["user_id"] = uid
+    ai_doc = ai_msg.dict(); ai_doc["user_id"] = uid
+    await db.chat_messages.insert_one(user_doc)
+    await db.chat_messages.insert_one(ai_doc)
 
     update = {"updated_at": utc_now_iso()}
     if not history_rows:
         update["title"] = (body.message.strip()[:40] or "New Chat")
-    await db.chat_sessions.update_one({"id": body.session_id}, {"$set": update})
+    await db.chat_sessions.update_one({"id": body.session_id, "user_id": uid}, {"$set": update})
 
     # Auto-extract memories in background (don't block response)
-    background.add_task(_extract_and_store_memories, body.session_id, body.message, reply)
+    background.add_task(_extract_and_store_memories, body.session_id, body.message, reply, uid)
 
     # Auto-learn digital twin from this user message
     try:
@@ -630,8 +682,9 @@ async def transcribe_audio(file: UploadFile = File(...), request: Request = None
 
 # ----- Memories -----
 @api_router.get("/memories", response_model=List[Memory])
-async def list_memories(category: Optional[str] = None, search: Optional[str] = None):
-    q: dict = {}
+async def list_memories(request: Request, category: Optional[str] = None, search: Optional[str] = None):
+    uid = _uid(request)
+    q: dict = {"user_id": uid}
     if category:
         q["category"] = category
     if search and search.strip():
@@ -645,7 +698,8 @@ async def list_memories(category: Optional[str] = None, search: Optional[str] = 
 
 
 @api_router.post("/memories", response_model=Memory)
-async def create_memory(body: MemoryCreate):
+async def create_memory(body: MemoryCreate, request: Request):
+    uid = _uid(request)
     cat = (body.category or "other").lower()
     if cat not in MEMORY_CATEGORIES:
         cat = "other"
@@ -655,33 +709,39 @@ async def create_memory(body: MemoryCreate):
         content=body.content.strip()[:400],
         importance=max(1, min(5, int(body.importance or 3))),
     )
-    await db.memories.insert_one(mem.dict())
+    doc = mem.dict(); doc["user_id"] = uid
+    await db.memories.insert_one(doc)
     return mem
 
 
 @api_router.delete("/memories/{memory_id}")
-async def delete_memory(memory_id: str):
-    await db.memories.delete_one({"id": memory_id})
+async def delete_memory(memory_id: str, request: Request):
+    uid = _uid(request)
+    await db.memories.delete_one({"id": memory_id, "user_id": uid})
     return {"ok": True}
 
 
 # ----- Goals -----
 @api_router.get("/goals", response_model=List[Goal])
-async def list_goals():
-    rows = await db.goals.find({}, {"_id": 0}).sort("updated_at", -1).to_list(500)
+async def list_goals(request: Request):
+    uid = _uid(request)
+    rows = await db.goals.find({"user_id": uid}, {"_id": 0}).sort("updated_at", -1).to_list(500)
     return [Goal(**r) for r in rows]
 
 
 @api_router.post("/goals", response_model=Goal)
-async def create_goal(body: GoalCreate):
+async def create_goal(body: GoalCreate, request: Request):
+    uid = _uid(request)
     g = Goal(title=body.title.strip()[:120], description=(body.description or "")[:600], target=(body.target or "")[:200])
-    await db.goals.insert_one(g.dict())
+    doc = g.dict(); doc["user_id"] = uid
+    await db.goals.insert_one(doc)
     return g
 
 
 @api_router.put("/goals/{goal_id}", response_model=Goal)
-async def update_goal(goal_id: str, body: GoalUpdate):
-    existing = await db.goals.find_one({"id": goal_id}, {"_id": 0})
+async def update_goal(goal_id: str, body: GoalUpdate, request: Request):
+    uid = _uid(request)
+    existing = await db.goals.find_one({"id": goal_id, "user_id": uid}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Goal not found")
     patch: dict = {"updated_at": utc_now_iso()}
@@ -697,21 +757,23 @@ async def update_goal(goal_id: str, body: GoalUpdate):
             patch["status"] = "completed"
     if body.status is not None and body.status in {"active", "paused", "completed"}:
         patch["status"] = body.status
-    await db.goals.update_one({"id": goal_id}, {"$set": patch})
+    await db.goals.update_one({"id": goal_id, "user_id": uid}, {"$set": patch})
     merged = {**existing, **patch}
     return Goal(**merged)
 
 
 @api_router.delete("/goals/{goal_id}")
-async def delete_goal(goal_id: str):
-    await db.goals.delete_one({"id": goal_id})
+async def delete_goal(goal_id: str, request: Request):
+    uid = _uid(request)
+    await db.goals.delete_one({"id": goal_id, "user_id": uid})
     return {"ok": True}
 
 
 # ----- Reminders -----
 @api_router.get("/reminders", response_model=List[Reminder])
-async def list_reminders(status: Optional[str] = None):
-    q: dict = {}
+async def list_reminders(request: Request, status: Optional[str] = None):
+    uid = _uid(request)
+    q: dict = {"user_id": uid}
     if status:
         q["status"] = status
     rows = await db.reminders.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -719,15 +781,18 @@ async def list_reminders(status: Optional[str] = None):
 
 
 @api_router.post("/reminders", response_model=Reminder)
-async def create_reminder(body: ReminderCreate):
+async def create_reminder(body: ReminderCreate, request: Request):
+    uid = _uid(request)
     r = Reminder(text=body.text.strip()[:300], condition=(body.condition or "")[:300])
-    await db.reminders.insert_one(r.dict())
+    doc = r.dict(); doc["user_id"] = uid
+    await db.reminders.insert_one(doc)
     return r
 
 
 @api_router.put("/reminders/{reminder_id}", response_model=Reminder)
-async def update_reminder(reminder_id: str, body: ReminderUpdate):
-    existing = await db.reminders.find_one({"id": reminder_id}, {"_id": 0})
+async def update_reminder(reminder_id: str, body: ReminderUpdate, request: Request):
+    uid = _uid(request)
+    existing = await db.reminders.find_one({"id": reminder_id, "user_id": uid}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Reminder not found")
     patch: dict = {"updated_at": utc_now_iso()}
@@ -737,14 +802,15 @@ async def update_reminder(reminder_id: str, body: ReminderUpdate):
         patch["condition"] = body.condition[:300]
     if body.status is not None and body.status in {"pending", "done", "dismissed"}:
         patch["status"] = body.status
-    await db.reminders.update_one({"id": reminder_id}, {"$set": patch})
+    await db.reminders.update_one({"id": reminder_id, "user_id": uid}, {"$set": patch})
     merged = {**existing, **patch}
     return Reminder(**merged)
 
 
 @api_router.delete("/reminders/{reminder_id}")
-async def delete_reminder(reminder_id: str):
-    await db.reminders.delete_one({"id": reminder_id})
+async def delete_reminder(reminder_id: str, request: Request):
+    uid = _uid(request)
+    await db.reminders.delete_one({"id": reminder_id, "user_id": uid})
     return {"ok": True}
 
 
@@ -799,16 +865,16 @@ def _greeting_for_now(tz_offset_minutes: int = 0) -> str:
 
 
 @api_router.get("/briefing")
-async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_offset: int = 0):
+async def briefing(request: Request, lat: Optional[float] = None, lon: Optional[float] = None, tz_offset: int = 0):
     """Daily briefing aggregating weather, pending reminders, active goals, upcoming dates from memories."""
+    uid = _uid(request)
     # Try to resolve the user's name from memories (preference: name=...)
     name_doc = await db.memories.find_one(
-        {"category": "preference", "subject": {"$regex": "name", "$options": "i"}},
+        {"user_id": uid, "category": "preference", "subject": {"$regex": "name", "$options": "i"}},
         {"_id": 0},
     )
     name = None
     if name_doc:
-        # content might be "User's name is Varun" — best-effort grab the last word
         m = re.search(r"(?:is|=|:)\s*([A-Z][A-Za-z'-]+)", name_doc.get("content", ""))
         if m:
             name = m.group(1)
@@ -817,22 +883,22 @@ async def briefing(lat: Optional[float] = None, lon: Optional[float] = None, tz_
     if lat is not None and lon is not None:
         weather = await _fetch_weather(lat, lon)
 
-    pending = await db.reminders.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(10)
-    active_goals = await db.goals.find({"status": "active"}, {"_id": 0}).sort("updated_at", -1).to_list(10)
+    pending = await db.reminders.find({"user_id": uid, "status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    active_goals = await db.goals.find({"user_id": uid, "status": "active"}, {"_id": 0}).sort("updated_at", -1).to_list(10)
     date_memories = await db.memories.find(
-        {"category": {"$in": ["date", "meeting"]}}, {"_id": 0}
+        {"user_id": uid, "category": {"$in": ["date", "meeting"]}}, {"_id": 0}
     ).sort("created_at", -1).to_list(10)
-    session_count = await db.chat_sessions.count_documents({})
+    session_count = await db.chat_sessions.count_documents({"user_id": uid})
 
     google_connected = False
     upcoming_events: List[dict] = []
     recent_emails: List[dict] = []
     google_email: Optional[str] = None
     try:
-        token = await gh.get_valid_token(db)
+        token = await _own_google_token(uid)
         if token:
             google_connected = True
-            doc = await db.integrations.find_one({"id": "google"}, {"_id": 0})
+            doc = await db.user_integrations.find_one({"user_id": uid, "provider": "google"}, {"_id": 0})
             google_email = (doc or {}).get("email")
             try:
                 upcoming_events = await gh.list_upcoming_events(token, max_results=5)
@@ -955,7 +1021,7 @@ def _name_from_sender(sender: str) -> Optional[str]:
     return None
 
 
-async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Optional[str]]:
+async def _extract_and_execute_action(user_text: str, uid: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
     """Detect an actionable intent and execute it. Returns (confirmation_note, whatsapp_link)."""
     if not user_text.strip():
         return None, None
@@ -968,11 +1034,12 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
             max_tokens=300,
             temperature=0.0,
             feature="action",
+            user_id=uid,
         )
         obj = _safe_json_object(raw)
         action = (obj.get("action") or "none").lower()
         if action == "create_event":
-            token = await gh.get_valid_token(db)
+            token = await _own_google_token(uid) if uid else None
             if not token:
                 return "\n\n📅 I tried to schedule that, but Google isn't connected yet. Open Daily Briefing → Connect Google.", None
             try:
@@ -986,7 +1053,7 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
                 logger.warning("Auto create_event failed: %s", e)
                 return f"\n\n⚠️ Couldn't create that event: {str(e)[:100]}", None
         if action == "send_email":
-            token = await gh.get_valid_token(db)
+            token = await _own_google_token(uid) if uid else None
             if not token:
                 return "\n\n✉️ I tried to send that, but Google isn't connected yet. Open Daily Briefing → Connect Google.", None
             try:
@@ -998,7 +1065,8 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
         if action == "create_reminder":
             r = Reminder(text=obj.get("text", "")[:300], condition=obj.get("condition", "")[:300])
             if r.text:
-                await db.reminders.insert_one(r.dict())
+                doc = r.dict(); doc["user_id"] = uid
+                await db.reminders.insert_one(doc)
                 return f"\n\n🔔 Added reminder: “{r.text}”", None
         if action == "whatsapp_message":
             text = (obj.get("text") or "").strip()
@@ -1061,30 +1129,41 @@ async def _extract_and_execute_action(user_text: str) -> tuple[Optional[str], Op
 
 # ----- Google OAuth + Gmail + Calendar -----
 @api_router.get("/google/auth-url")
-async def google_auth_url():
+async def google_auth_url(request: Request):
+    uid = _uid(request)
     if not gh.is_configured():
         raise HTTPException(500, "Google OAuth not configured on this server")
-    return {"url": gh.auth_url()}
+    # Embed the user_id in the OAuth `state` so the callback can persist tokens to the right user.
+    return {"url": gh.auth_url(state=f"user:{uid}")}
 
 
 @api_router.get("/google/status")
-async def google_status():
-    doc = await db.integrations.find_one({"id": "google"}, {"_id": 0})
+async def google_status(request: Request):
+    uid = _uid(request)
+    doc = await db.user_integrations.find_one({"user_id": uid, "provider": "google"}, {"_id": 0})
     if not doc:
         return {"connected": False}
     return {"connected": True, "email": doc.get("email"), "name": doc.get("name")}
 
 
 @api_router.get("/me")
-async def me():
-    """Single-user auth gate. Returns Google user profile if connected, else 401."""
-    doc = await db.integrations.find_one({"id": "google"}, {"_id": 0})
-    if not doc or not doc.get("email"):
+async def me(request: Request):
+    """Return the signed-in user's profile (from the auth middleware)."""
+    uid = _uid(request)
+    user = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    if not user:
         raise HTTPException(status_code=401, detail="Not signed in")
+    # Surface Google connection info if present
+    gi = await db.user_integrations.find_one({"user_id": uid, "provider": "google"}, {"_id": 0})
     return {
-        "email": doc.get("email"),
-        "name": doc.get("name"),
-        "picture": doc.get("picture"),
+        "id": user.get("id"),
+        "email": user.get("email"),
+        "name": user.get("name"),
+        "picture": user.get("picture"),
+        "plan": user.get("plan"),
+        "role": user.get("role"),
+        "google_connected": bool(gi),
+        "google_email": gi.get("email") if gi else None,
     }
 
 
@@ -1139,7 +1218,8 @@ async def _classify_notification(title: str, text: str) -> dict:
 
 
 @api_router.post("/notifications/ingest", response_model=DeviceNotification)
-async def ingest_notification(body: NotificationIngest, background: BackgroundTasks):
+async def ingest_notification(body: NotificationIngest, background: BackgroundTasks, request: Request):
+    uid = _uid(request)
     raw = f"{body.title or ''} | {body.text or ''}".strip()
     note = DeviceNotification(
         package_name=body.package_name,
@@ -1149,7 +1229,6 @@ async def ingest_notification(body: NotificationIngest, background: BackgroundTa
         posted_at=body.posted_at or utc_now_iso(),
         raw_text=raw,
     )
-    # Classify synchronously (small + fast) so the row stored has the right kind
     cls = await _classify_notification(note.title, note.text)
     note.kind = (cls.get("kind") or "other").lower()
     if note.kind == "transaction":
@@ -1160,13 +1239,15 @@ async def ingest_notification(body: NotificationIngest, background: BackgroundTa
         note.currency = cls.get("currency") or None
         note.direction = (cls.get("direction") or "").lower() or None
         note.merchant = cls.get("merchant") or None
-    await db.notifications.insert_one(note.dict())
+    doc = note.dict(); doc["user_id"] = uid
+    await db.notifications.insert_one(doc)
     return note
 
 
 @api_router.get("/notifications", response_model=List[DeviceNotification])
-async def list_notifications(kind: Optional[str] = None, limit: int = 100):
-    q: dict = {}
+async def list_notifications(request: Request, kind: Optional[str] = None, limit: int = 100):
+    uid = _uid(request)
+    q: dict = {"user_id": uid}
     if kind:
         q["kind"] = kind
     rows = await db.notifications.find(q, {"_id": 0}).sort("posted_at", -1).to_list(limit)
@@ -1174,15 +1255,17 @@ async def list_notifications(kind: Optional[str] = None, limit: int = 100):
 
 
 @api_router.delete("/notifications/{nid}")
-async def delete_notification(nid: str):
-    await db.notifications.delete_one({"id": nid})
+async def delete_notification(nid: str, request: Request):
+    uid = _uid(request)
+    await db.notifications.delete_one({"id": nid, "user_id": uid})
     return {"ok": True}
 
 
 @api_router.delete("/notifications")
-async def clear_notifications(kind: Optional[str] = None):
-    """Clear all notifications (or all of a given kind)."""
-    q: dict = {}
+async def clear_notifications(request: Request, kind: Optional[str] = None):
+    """Clear all notifications (or all of a given kind) for the signed-in user."""
+    uid = _uid(request)
+    q: dict = {"user_id": uid}
     if kind:
         q["kind"] = kind
     res = await db.notifications.delete_many(q)
@@ -1190,8 +1273,9 @@ async def clear_notifications(kind: Optional[str] = None):
 
 
 @api_router.post("/google/disconnect")
-async def google_disconnect():
-    await db.integrations.delete_one({"id": "google"})
+async def google_disconnect(request: Request):
+    uid = _uid(request)
+    await db.user_integrations.delete_one({"user_id": uid, "provider": "google"})
     return {"ok": True}
 
 
@@ -1212,22 +1296,14 @@ async def google_callback(code: Optional[str] = None, error: Optional[str] = Non
     info = await gh.get_userinfo(access) if access else {}
     import time as _t
     now = int(_t.time())
-    set_doc = {
-        "id": "google",
-        "access_token": access,
-        "expires_at": now + expires_in,
-        "scope": tok.get("scope", ""),
-        "email": info.get("email"),
-        "name": info.get("name"),
-        "picture": info.get("picture"),
-        "updated_at": utc_now_iso(),
-    }
-    if refresh:
-        set_doc["refresh_token"] = refresh
-    await db.integrations.update_one({"id": "google"}, {"$set": set_doc}, upsert=True)
 
-    # Login-handoff path: state starts with "login:<nonce>"
-    if state and state.startswith("login:") and info.get("email"):
+    # Resolve which app user this OAuth flow belongs to.
+    # State formats:  "user:<uid>"  (signed-in user linking Google)
+    #                 "login:<nonce>" (sign-in flow — user created/looked up by email)
+    target_uid: Optional[str] = None
+    if state and state.startswith("user:"):
+        target_uid = state.split(":", 1)[1]
+    elif state and state.startswith("login:") and info.get("email"):
         nonce = state.split(":", 1)[1]
         try:
             user = await auth_mod.upsert_oauth_user(
@@ -1236,39 +1312,51 @@ async def google_callback(code: Optional[str] = None, error: Optional[str] = Non
                 picture=info.get("picture") or "",
                 provider="google",
             )
+            target_uid = user.get("id")
             await auth_mod.finalize_handoff(db, nonce, user)
-            return HTMLResponse(
-                """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-                <div style="text-align:center;padding:32px;">
-                  <div style="font-size:48px;color:#E1B168;">&#10003;</div>
-                  <h2 style="font-weight:400;">Signed in to ORA OS</h2>
-                  <p style="color:#B4B4B8;">You can close this tab and return to the app.</p>
-                  <script>setTimeout(function(){window.close()},1200);</script>
-                </div></body></html>"""
-            )
         except Exception as e:
             logger.warning("Login handoff failed: %s", e)
             return HTMLResponse(f"<h2>Login failed</h2><pre>{e}</pre>", status_code=500)
 
-    return HTMLResponse(
-        """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+    # Persist token tied to the resolved user (only if we know who they are)
+    if target_uid:
+        set_doc = {
+            "user_id": target_uid,
+            "provider": "google",
+            "access_token": access,
+            "expires_at": now + expires_in,
+            "scope": tok.get("scope", ""),
+            "email": info.get("email"),
+            "name": info.get("name"),
+            "picture": info.get("picture"),
+            "updated_at": utc_now_iso(),
+        }
+        if refresh:
+            set_doc["refresh_token"] = refresh
+        await db.user_integrations.update_one(
+            {"user_id": target_uid, "provider": "google"},
+            {"$set": set_doc},
+            upsert=True,
+        )
+
+    closing_html = """<html><body style="font-family:system-ui;background:#0a0a0c;color:#F7F7F8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
         <div style="text-align:center;padding:32px;">
           <div style="font-size:48px;color:#E1B168;">&#10003;</div>
           <h2 style="font-weight:400;">Google connected</h2>
           <p style="color:#B4B4B8;">You can close this tab and return to ORA OS.</p>
           <script>setTimeout(function(){window.close()},1500);</script>
         </div></body></html>"""
-    )
+    return HTMLResponse(closing_html)
 
 
 @api_router.get("/gmail/recent")
 async def gmail_recent(limit: int = 5, request: Request = None):
-    token = await gh.get_valid_token(db)
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected")
     res = await gh.list_recent_messages(token, max_results=limit)
     try:
-        uid = getattr(request.state, "user_id", None) if request else None
         await cost_intel.log_cost_event(db, provider="google_workspace", service="gmail",
                                         feature="email", user_id=uid, requests=1 + len(res or []))
     except Exception:
@@ -1277,19 +1365,21 @@ async def gmail_recent(limit: int = 5, request: Request = None):
 
 
 @api_router.get("/gmail/messages/{msg_id}")
-async def gmail_get_message(msg_id: str):
-    token = await gh.get_valid_token(db)
+async def gmail_get_message(msg_id: str, request: Request):
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected")
     return await gh.get_message_full(token, msg_id)
 
 
 @api_router.delete("/gmail/messages/{msg_id}")
-async def gmail_delete_message(msg_id: str):
+async def gmail_delete_message(msg_id: str, request: Request):
     """Move a Gmail message to Trash. Requires the gmail.modify scope —
     if the user connected Google before this scope was added, the request
     returns 403 and they must reconnect."""
-    token = await gh.get_valid_token(db)
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected")
     return await gh.trash_message(token, msg_id)
@@ -1302,8 +1392,9 @@ class SendEmailReq(BaseModel):
 
 
 @api_router.post("/gmail/send")
-async def gmail_send(body: SendEmailReq):
-    token = await gh.get_valid_token(db)
+async def gmail_send(body: SendEmailReq, request: Request):
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected")
     return await gh.send_email(token, body.to, body.subject, body.body)
@@ -1311,12 +1402,12 @@ async def gmail_send(body: SendEmailReq):
 
 @api_router.get("/calendar/upcoming")
 async def calendar_upcoming(limit: int = 10, request: Request = None):
-    token = await gh.get_valid_token(db)
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected")
     res = await gh.list_upcoming_events(token, max_results=limit)
     try:
-        uid = getattr(request.state, "user_id", None) if request else None
         await cost_intel.log_cost_event(db, provider="google_workspace", service="calendar",
                                         feature="calendar", user_id=uid, requests=1)
     except Exception:
@@ -1332,8 +1423,9 @@ class CreateEventReq(BaseModel):
 
 
 @api_router.post("/calendar/events")
-async def calendar_create(body: CreateEventReq):
-    token = await gh.get_valid_token(db)
+async def calendar_create(body: CreateEventReq, request: Request):
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected")
     return await gh.create_event(token, body.summary, body.start_iso, body.end_iso, body.description or "")
@@ -1490,136 +1582,153 @@ async def web_search(body: WebSearchRequest):
 # ==================== KNOWLEDGE VAULT ====================
 
 @api_router.post("/knowledge/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), request: Request = None):
     """Upload a document to the knowledge vault."""
+    uid = _uid(request)
     content = await file.read()
     result = await kv.process_document(
         content,
         file.filename or "document",
         file.content_type or "application/octet-stream",
-        db
+        db,
+        user_id=uid,
     )
     return result
 
 
 @api_router.get("/knowledge/documents")
-async def list_knowledge_documents(skip: int = 0, limit: int = 20):
-    """List all documents in the knowledge vault."""
-    docs = await kv.list_documents(db, skip, limit)
-    total = await db.knowledge_docs.count_documents({})
+async def list_knowledge_documents(request: Request, skip: int = 0, limit: int = 20):
+    """List all documents in the knowledge vault for the signed-in user."""
+    uid = _uid(request)
+    docs = await kv.list_documents(db, skip, limit, user_id=uid)
+    total = await db.knowledge_docs.count_documents({"user_id": uid})
     return {"documents": docs, "total": total}
 
 
 @api_router.get("/knowledge/documents/{doc_id}")
-async def get_knowledge_document(doc_id: str):
+async def get_knowledge_document(doc_id: str, request: Request):
     """Get a specific document."""
-    doc = await kv.get_document(doc_id, db)
+    uid = _uid(request)
+    doc = await kv.get_document(doc_id, db, user_id=uid)
     if not doc:
         raise HTTPException(404, "Document not found")
     return doc
 
 
 @api_router.delete("/knowledge/documents/{doc_id}")
-async def delete_knowledge_document(doc_id: str):
+async def delete_knowledge_document(doc_id: str, request: Request):
     """Delete a document from the knowledge vault."""
-    deleted = await kv.delete_document(doc_id, db)
+    uid = _uid(request)
+    deleted = await kv.delete_document(doc_id, db, user_id=uid)
     if not deleted:
         raise HTTPException(404, "Document not found")
     return {"ok": True}
 
 
 @api_router.post("/knowledge/search")
-async def search_knowledge(body: WebSearchRequest):
+async def search_knowledge(body: WebSearchRequest, request: Request):
     """Search the knowledge vault."""
-    results = await kv.search_documents(body.query, db)
+    uid = _uid(request)
+    results = await kv.search_documents(body.query, db, user_id=uid)
     return {"query": body.query, "results": results}
 
 
 @api_router.get("/knowledge/stats")
-async def get_knowledge_stats():
+async def get_knowledge_stats(request: Request):
     """Get knowledge vault statistics."""
-    return await kv.get_vault_stats(db)
+    uid = _uid(request)
+    return await kv.get_vault_stats(db, user_id=uid)
 
 
 # ==================== PHONE CALLS ====================
 
 @api_router.post("/calls")
-async def create_phone_call(body: pc.CallRequest):
+async def create_phone_call(body: pc.CallRequest, request: Request):
     """Create a new AI phone call (mock mode)."""
-    return await pc.create_call(body, db)
+    uid = _uid(request)
+    return await pc.create_call(body, db, user_id=uid)
 
 
 @api_router.get("/calls")
-async def list_phone_calls(status: Optional[str] = None, limit: int = 50, skip: int = 0):
+async def list_phone_calls(request: Request, status: Optional[str] = None, limit: int = 50, skip: int = 0):
     """List phone calls."""
-    calls = await pc.list_calls(db, status, limit, skip)
-    total = await db.phone_calls.count_documents({})
+    uid = _uid(request)
+    calls = await pc.list_calls(db, status, limit, skip, user_id=uid)
+    total = await db.phone_calls.count_documents({"user_id": uid})
     return {"calls": calls, "total": total}
 
 
 @api_router.get("/calls/{call_id}")
-async def get_phone_call(call_id: str):
+async def get_phone_call(call_id: str, request: Request):
     """Get a specific phone call."""
-    call = await pc.get_call(call_id, db)
+    uid = _uid(request)
+    call = await pc.get_call(call_id, db, user_id=uid)
     if not call:
         raise HTTPException(404, "Call not found")
     return call
 
 
 @api_router.put("/calls/{call_id}")
-async def update_phone_call(call_id: str, body: pc.CallUpdate):
+async def update_phone_call(call_id: str, body: pc.CallUpdate, request: Request):
     """Update a phone call."""
-    call = await pc.update_call(call_id, body, db)
+    uid = _uid(request)
+    call = await pc.update_call(call_id, body, db, user_id=uid)
     if not call:
         raise HTTPException(404, "Call not found")
     return call
 
 
 @api_router.post("/calls/{call_id}/cancel")
-async def cancel_phone_call(call_id: str):
+async def cancel_phone_call(call_id: str, request: Request):
     """Cancel a pending phone call."""
-    cancelled = await pc.cancel_call(call_id, db)
+    uid = _uid(request)
+    cancelled = await pc.cancel_call(call_id, db, user_id=uid)
     if not cancelled:
         raise HTTPException(400, "Call cannot be cancelled")
     return {"ok": True}
 
 
 @api_router.get("/calls/stats/summary")
-async def get_call_stats():
+async def get_call_stats(request: Request):
     """Get phone call statistics."""
-    return await pc.get_call_stats(db)
+    uid = _uid(request)
+    return await pc.get_call_stats(db, user_id=uid)
 
 
 # ==================== DASHBOARD ====================
 
 @api_router.get("/dashboard")
-async def get_dashboard(days: int = 30):
+async def get_dashboard(request: Request, days: int = 30):
     """Get complete dashboard data."""
-    return await dash.get_full_dashboard(db, days)
+    uid = _uid(request)
+    return await dash.get_full_dashboard(db, days, user_id=uid)
 
 
 @api_router.get("/dashboard/usage")
-async def get_usage_stats(days: int = 30):
+async def get_usage_stats(request: Request, days: int = 30):
     """Get usage statistics."""
-    return await dash.get_usage_stats(db, days)
+    uid = _uid(request)
+    return await dash.get_usage_stats(db, days, user_id=uid)
 
 
 @api_router.get("/dashboard/spending")
-async def get_spending_insights(days: int = 30):
+async def get_spending_insights(request: Request, days: int = 30):
     """Get spending insights from banking notifications."""
-    return await dash.get_spending_insights(db, days)
+    return await dash.get_spending_insights(db, days, user_id=uid)
 
 
 @api_router.get("/dashboard/productivity")
-async def get_productivity_analytics(days: int = 7):
+async def get_productivity_analytics(request: Request, days: int = 7):
     """Get productivity analytics."""
-    return await dash.get_productivity_analytics(db, days)
+    uid = _uid(request)
+    return await dash.get_productivity_analytics(db, days, user_id=uid)
 
 
 @api_router.get("/dashboard/insights")
-async def get_ai_insights():
+async def get_ai_insights(request: Request):
     """Get AI-generated insights."""
-    return await dash.get_ai_insights(db)
+    uid = _uid(request)
+    return await dash.get_ai_insights(db, user_id=uid)
 
 
 # ==================== NATIVE NOTIFICATIONS (Enhanced) ====================
@@ -1632,11 +1741,13 @@ class MockNotificationRequest(BaseModel):
 
 
 @api_router.post("/notifications/mock")
-async def create_mock_notification(body: MockNotificationRequest):
+async def create_mock_notification(body: MockNotificationRequest, request: Request):
     """Create a mock notification for testing."""
+    uid = _uid(request)
     from datetime import datetime, timezone
     note = {
         "id": str(uuid.uuid4()),
+        "user_id": uid,
         "package_name": f"com.{body.app_name.lower().replace(' ', '')}",
         "title": body.title,
         "text": body.text,
@@ -1647,7 +1758,6 @@ async def create_mock_notification(body: MockNotificationRequest):
         "raw_text": f"{body.title} | {body.text}"
     }
     
-    # Classify the notification
     cls = await _classify_notification(note["title"], note["text"])
     note["kind"] = (cls.get("kind") or "other").lower()
     if note["kind"] == "transaction":
@@ -1934,9 +2044,10 @@ async def get_recurring_transactions():
 
 
 @api_router.post("/finance/sync-gmail")
-async def sync_gmail_transactions(days: int = 30, max_messages: int = 100):
+async def sync_gmail_transactions(request: Request, days: int = 30, max_messages: int = 100):
     """Scan Gmail for bank / UPI / credit-card emails and auto-create transactions."""
-    token = await gh.get_valid_token(db)
+    uid = _uid(request)
+    token = await _own_google_token(uid)
     if not token:
         raise HTTPException(401, "Google not connected. Connect Google in the briefing screen first.")
     scanner = fb.GmailFinanceScanner(db, get_finance_brain())
@@ -2178,48 +2289,52 @@ async def life_dashboard():
 # ==================== LIFE OS TIMELINE ====================
 
 @api_router.get("/timeline")
-async def timeline_for_date(date: Optional[str] = None, tz_offset: int = 0):
+async def timeline_for_date(request: Request, date: Optional[str] = None, tz_offset: int = 0):
     """Aggregated event timeline for a given local date (YYYY-MM-DD). Defaults to today."""
+    uid = _uid(request)
     if not date:
         date = (datetime.now(timezone.utc) + timedelta(minutes=tz_offset)).date().isoformat()
     token = None
     try:
-        token = await gh.get_valid_token(db)
+        token = await _own_google_token(uid)
     except Exception:
         pass
-    return await tl.build_day_timeline(db, date, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token)
+    return await tl.build_day_timeline(db, date, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token, user_id=uid)
 
 
 @api_router.get("/timeline/on-this-day")
-async def timeline_on_this_day(months_back: int = 12, tz_offset: int = 0):
+async def timeline_on_this_day(request: Request, months_back: int = 12, tz_offset: int = 0):
     """Memory Time Machine: what happened today X months ago."""
+    uid = _uid(request)
     token = None
     try:
-        token = await gh.get_valid_token(db)
+        token = await _own_google_token(uid)
     except Exception:
         pass
-    return await tl.on_this_day(db, months_back=months_back, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token)
+    return await tl.on_this_day(db, months_back=months_back, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token, user_id=uid)
 
 
 @api_router.get("/timeline/range")
-async def timeline_range(from_: str, to_: str, tz_offset: int = 0):
+async def timeline_range(request: Request, from_: str, to_: str, tz_offset: int = 0):
     """Aggregate totals for a date range (e.g. all of March)."""
-    return await tl.range_summary(db, from_date=from_, to_date=to_, tz_offset_minutes=tz_offset)
+    uid = _uid(request)
+    return await tl.range_summary(db, from_date=from_, to_date=to_, tz_offset_minutes=tz_offset, user_id=uid)
 
 
 # ==================== AI JOURNAL ====================
 
 @api_router.post("/journal/generate")
-async def generate_journal(date: Optional[str] = None, tz_offset: int = 0, overwrite: bool = True):
+async def generate_journal(request: Request, date: Optional[str] = None, tz_offset: int = 0, overwrite: bool = True):
     """Generate the journal for a given date (default: today)."""
+    uid = _uid(request)
     if not date:
         date = (datetime.now(timezone.utc) + timedelta(minutes=tz_offset)).date().isoformat()
     token = None
     try:
-        token = await gh.get_valid_token(db)
+        token = await _own_google_token(uid)
     except Exception:
         pass
-    timeline = await tl.build_day_timeline(db, date, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token)
+    timeline = await tl.build_day_timeline(db, date, tz_offset_minutes=tz_offset, google_helper=gh, google_token=token, user_id=uid)
     twin = get_digital_twin()
     style = await twin.get_style_prompt()
     entry = await journal_mod.generate_journal_for_date(
@@ -2857,6 +2972,8 @@ app.include_router(auth_routes_mod.router, prefix="/api")
 app.include_router(admin_routes_mod.router, prefix="/api/admin")
 app.include_router(admin_routes_mod.public_router, prefix="/api/features")
 app.include_router(cost_intel.router, prefix="/api/admin")
+app.include_router(exp_mod.admin_router, prefix="/api/admin")
+app.include_router(exp_mod.public_router, prefix="/api")
 
 
 async def _resolve_expo_tunnel_url() -> str:
@@ -3016,6 +3133,7 @@ async def _on_startup():
         await admin_routes_mod.ensure_indexes(db)
         await admin_routes_mod.bootstrap_defaults(db)
         await cost_intel.ensure_indexes(db)
+        await exp_mod.ensure_indexes(db)
         await auth_mod.seed_admin(db)
     except Exception as e:
         logger.warning("Auth startup hook failed: %s", e)

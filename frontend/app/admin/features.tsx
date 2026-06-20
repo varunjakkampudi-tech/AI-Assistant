@@ -9,10 +9,17 @@ export default function FeatureFlagsScreen() {
   const [items, setItems] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [newKey, setNewKey] = useState("");
+  const [reasonDraft, setReasonDraft] = useState<Record<string, string>>({});
 
   const load = async () => {
     setBusy(true);
-    try { const d = await adminFetch("/api/admin/features"); setItems(d.items || []); }
+    try {
+      const d = await adminFetch("/api/admin/features");
+      setItems(d.items || []);
+      const drafts: Record<string, string> = {};
+      (d.items || []).forEach((f: any) => { drafts[f.key] = f.paused_reason || ""; });
+      setReasonDraft(drafts);
+    }
     finally { setBusy(false); }
   };
   useEffect(() => { load(); }, []);
@@ -62,13 +69,35 @@ export default function FeatureFlagsScreen() {
               ))}
             </View>
             <Text style={{ color: COLORS.textDim, fontSize: 11, marginBottom: 6 }}>ROLLOUT · {f.rollout_pct}%</Text>
-            <View style={{ flexDirection: "row", gap: 6 }}>
+            <View style={{ flexDirection: "row", gap: 6, marginBottom: 14 }}>
               {[0, 10, 25, 50, 75, 100].map(p => (
                 <Pressable key={p} onPress={() => save(f, { rollout_pct: p })} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: f.rollout_pct === p ? COLORS.brand : "transparent", borderWidth: 1, borderColor: f.rollout_pct === p ? COLORS.brand : COLORS.border }} data-testid={`feature-${f.key}-rollout-${p}`}>
                   <Text style={{ color: f.rollout_pct === p ? COLORS.bg : COLORS.textDim, fontSize: 12, fontWeight: "600" }}>{p}%</Text>
                 </Pressable>
               ))}
             </View>
+            <Text style={{ color: COLORS.textDim, fontSize: 11, marginBottom: 6 }}>PAUSED MESSAGE · shown to users when this feature is hidden</Text>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <TextInput
+                value={reasonDraft[f.key] ?? ""}
+                onChangeText={(v) => setReasonDraft((d) => ({ ...d, [f.key]: v }))}
+                placeholder="e.g. Down for maintenance until 7 PM IST"
+                placeholderTextColor={COLORS.textFaint}
+                style={[inputStyle, { flex: 1, width: undefined }]}
+                data-testid={`feature-${f.key}-reason-input`}
+              />
+              <Button
+                small
+                label="Save message"
+                onPress={() => save(f, { paused_reason: reasonDraft[f.key] || "" })}
+                testID={`feature-${f.key}-reason-save`}
+              />
+            </View>
+            {f.paused_reason ? (
+              <Text style={{ color: COLORS.brand, fontSize: 11, marginTop: 8, fontStyle: "italic" }}>
+                Current message: “{f.paused_reason}”
+              </Text>
+            ) : null}
           </Card>
         ))}
       </View>

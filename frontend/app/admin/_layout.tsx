@@ -11,6 +11,7 @@ const NAV = [
   { href: "/admin/costs", label: "Cost Intelligence", icon: "💸" },
   { href: "/admin/prompts", label: "Prompts", icon: "📝" },
   { href: "/admin/features", label: "Feature Flags", icon: "🚩" },
+  { href: "/admin/experiments", label: "A/B Experiments", icon: "🧪" },
   { href: "/admin/billing", label: "Billing & Plans", icon: "💳" },
   { href: "/admin/analytics", label: "Analytics", icon: "📈" },
   { href: "/admin/security", label: "Security", icon: "🛡️" },
