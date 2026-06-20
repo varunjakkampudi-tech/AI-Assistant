@@ -36,6 +36,7 @@ import career as career_mod
 import auth as auth_mod
 import auth_routes as auth_routes_mod
 import security as security_mod
+import admin_routes as admin_routes_mod
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -2699,6 +2700,7 @@ async def expo_go_page():
 
 app.include_router(api_router)
 app.include_router(auth_routes_mod.router, prefix="/api")
+app.include_router(admin_routes_mod.router, prefix="/api/admin")
 
 
 async def _resolve_expo_tunnel_url() -> str:
@@ -2799,6 +2801,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/expo-qr",
     "/api/install",
     "/api/support/faq",
+    "/api/admin/login",
     "/docs", "/openapi.json", "/redoc",
 )
 
@@ -2853,6 +2856,8 @@ async def _on_startup():
     try:
         await auth_mod.ensure_indexes(db)
         await security_mod.ensure_indexes(db)
+        await admin_routes_mod.ensure_indexes(db)
+        await admin_routes_mod.bootstrap_defaults(db)
         await auth_mod.seed_admin(db)
     except Exception as e:
         logger.warning("Auth startup hook failed: %s", e)

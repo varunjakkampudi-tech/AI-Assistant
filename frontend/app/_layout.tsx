@@ -27,6 +27,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading) return;
     const inAuthGroup = segments[0] === "sign-in" || segments[0] === "legal";
+    const inAdminGroup = segments[0] === "admin";
+    if (inAdminGroup) return; // admin layout handles its own auth
     if (!user && !inAuthGroup) {
       router.replace("/sign-in" as any);
     } else if (user && inAuthGroup) {

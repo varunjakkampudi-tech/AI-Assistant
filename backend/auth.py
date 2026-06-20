@@ -287,13 +287,16 @@ async def seed_admin(db) -> None:
     existing = await db.users.find_one({"email": email})
     if existing is None:
         try:
-            await create_user(db, email=email, password=password, name="Owner", role="admin")
-            logger.info("Seeded admin user %s", email)
+            await create_user(db, email=email, password=password, name="Super Admin", role="super_admin")
+            logger.info("Seeded super admin user %s", email)
         except HTTPException:
             pass
-    elif existing.get("password_hash") and not verify_password(password, existing["password_hash"]):
-        await db.users.update_one(
-            {"email": email},
-            {"$set": {"password_hash": hash_password(password), "updated_at": _iso(_now())}}
-        )
-        logger.info("Updated admin password for %s", email)
+    else:
+        patch = {"updated_at": _iso(_now())}
+        if existing.get("role") not in ("super_admin", "admin"):
+            patch["role"] = "super_admin"
+        if existing.get("password_hash") and not verify_password(password, existing["password_hash"]):
+            patch["password_hash"] = hash_password(password)
+        if len(patch) > 1:
+            await db.users.update_one({"email": email}, {"$set": patch})
+            logger.info("Synced admin account for %s", email)

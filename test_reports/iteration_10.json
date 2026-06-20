@@ -1,0 +1,43 @@
+{
+  "summary": "Full backend test of Super Master Admin Console (/api/admin/*). 32/32 tests passed including auth (login + 403 for non-admin), dashboard metrics, cost-series, user CRUD (status/role/plan/revoke-sessions), AI providers (create/mask/patch), feature-models, AI usage ingest+aggregate, budget, feature flags, prompts (publish/rollback), audit log, security/health, notifications (announcement fan-out), config roundtrip, billing summary, plan upsert, analytics, support tickets, plus regression on /api/auth/otp/request and /api/expo-qr — both still work.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/users/{id}/role and /api/admin/users/{id}", "issue": "Only super_admin can change role or delete; spec lists 'admin' role too but current guard is require_super_admin. This is safer behaviour; flag for product review only."},
+      {"endpoint": "/api/admin/prompts/{id}/rollback", "issue": "Implemented as alias of /publish — works, but no separate audit action 'prompt.rollback' is recorded (audit shows 'prompt.published')."},
+      {"endpoint": "/api/admin/health/snapshot", "issue": "Provider 'status' is derived from credential presence only (no live ping). Documented as mocked, no fix needed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_console.py",
+    "/app/test_reports/pytest/admin_console_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Record a distinct 'prompt.rollback' audit action instead of reusing 'prompt.published' for clearer audit history.",
+    "(Optional) Decide whether plain 'admin' (non-super) should be allowed to change roles / delete users; doc & guard are inconsistent with PRD wording.",
+    "(Nice-to-have) Live ping for provider health in /api/admin/health/snapshot when quota allows."
+  ],
+  "critical_code_review_comments": [
+    "admin_routes.py is 1173 lines — exceeds 700-line guideline; consider splitting per domain (users.py / ai.py / prompts.py / config.py).",
+    "Fernet key is required at runtime: if ADMIN_FERNET_KEY is missing, every provider call 500s. Bootstrap validates by raising on first /ai/providers POST, not at startup. Add startup check.",
+    "metrics_overview iterates db.users.find with async for to build plan_distribution — fine for small data but won't scale; use aggregate $group instead.",
+    "user_delete cascade list is hard-coded; if a new per-user collection is added later it will leak data. Centralise the list (e.g., USER_COLLECTIONS constant in one module).",
+    "audit() catches all exceptions silently — if Mongo write fails we lose immutability guarantee. Should at least re-raise after logging or persist to backup.",
+    "/api/admin/billing/summary is intentionally mocked (MRR/ARR = plan_price × user_count). Confirmed in note — fine, but UI should display 'estimated' badge."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_console.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "not tested (frontend-only request was skipped per review_request)"},
+  "test_credentials": "admin@oraos.app / Admin@123456 (super_admin) — read from /app/memory/test_credentials.md",
+  "seed_data_creation": "Tests created: 1 non-admin user (TEST_nonadmin_*), 1 target user (TEST_target_*) via auth_mod.upsert_oauth_user; AI usage rows; feature flags (test_flag_*); prompts (test_prompt_*); modified openai provider, monthly budget, app_name config, pro plan price. All prefixed TEST_ where applicable. No production data touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend admin endpoints all green. The non-admin 403 test inserts a user directly through auth_mod.upsert_oauth_user because DEV_OTP_RETURN_CODE is not set in this env. If next agent needs a normal-user JWT, use the same fixture pattern (non_admin_user / non_admin_token) in /app/backend/tests/test_admin_console.py. Frontend admin UI was reported visually-verified by main agent and was NOT exercised here.",
+  "rca of the issue": "n/a — no failing tests"
+}
