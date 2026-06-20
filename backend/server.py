@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File, BackgroundTasks, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -37,6 +37,7 @@ import auth as auth_mod
 import auth_routes as auth_routes_mod
 import security as security_mod
 import admin_routes as admin_routes_mod
+import cost_intelligence as cost_intel
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 ROOT_DIR = Path(__file__).parent
@@ -585,13 +586,19 @@ async def chat(body: ChatRequest, background: BackgroundTasks):
 
 # ----- Transcribe -----
 @api_router.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(file: UploadFile = File(...), request: Request = None):
     suffix = Path(file.filename or "audio.m4a").suffix.lower() or ".m4a"
     if suffix.lstrip('.') not in {"mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"}:
         suffix = ".m4a"
     tmp_path = None
+    import time as _time
+    started = _time.perf_counter()
+    success = True
+    minutes = 0.0
     try:
         contents = await file.read()
+        # Estimate audio duration via byte size (m4a/aac ~16kbps for voice ≈ 2KB/sec)
+        minutes = round(len(contents) / 32000.0, 2)  # ~32KB ≈ 1 min
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(contents)
             tmp_path = tmp.name
@@ -601,9 +608,19 @@ async def transcribe_audio(file: UploadFile = File(...)):
         text = result if isinstance(result, str) else (getattr(result, "text", "") or str(result))
         return {"text": text.strip()}
     except Exception as e:
+        success = False
         logger.exception("Transcription failed")
         raise HTTPException(status_code=502, detail=f"Transcription failed: {e}")
     finally:
+        latency_ms = int((_time.perf_counter() - started) * 1000)
+        try:
+            user_id = getattr(request.state, "user_id", None) if request else None
+            await cost_intel.log_cost_event(
+                db, provider="openai", service="whisper-1", feature="voice",
+                user_id=user_id, minutes=minutes, success=success, latency_ms=latency_ms,
+            )
+        except Exception:
+            pass
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -1245,11 +1262,18 @@ async def google_callback(code: Optional[str] = None, error: Optional[str] = Non
 
 
 @api_router.get("/gmail/recent")
-async def gmail_recent(limit: int = 5):
+async def gmail_recent(limit: int = 5, request: Request = None):
     token = await gh.get_valid_token(db)
     if not token:
         raise HTTPException(401, "Google not connected")
-    return {"messages": await gh.list_recent_messages(token, max_results=limit)}
+    res = await gh.list_recent_messages(token, max_results=limit)
+    try:
+        uid = getattr(request.state, "user_id", None) if request else None
+        await cost_intel.log_cost_event(db, provider="google_workspace", service="gmail",
+                                        feature="email", user_id=uid, requests=1 + len(res or []))
+    except Exception:
+        pass
+    return {"messages": res}
 
 
 @api_router.get("/gmail/messages/{msg_id}")
@@ -1286,11 +1310,18 @@ async def gmail_send(body: SendEmailReq):
 
 
 @api_router.get("/calendar/upcoming")
-async def calendar_upcoming(limit: int = 10):
+async def calendar_upcoming(limit: int = 10, request: Request = None):
     token = await gh.get_valid_token(db)
     if not token:
         raise HTTPException(401, "Google not connected")
-    return {"events": await gh.list_upcoming_events(token, max_results=limit)}
+    res = await gh.list_upcoming_events(token, max_results=limit)
+    try:
+        uid = getattr(request.state, "user_id", None) if request else None
+        await cost_intel.log_cost_event(db, provider="google_workspace", service="calendar",
+                                        feature="calendar", user_id=uid, requests=1)
+    except Exception:
+        pass
+    return {"events": res}
 
 
 class CreateEventReq(BaseModel):
@@ -1676,20 +1707,34 @@ class TTSRequest(BaseModel):
 
 
 @api_router.post("/voice/tts")
-async def text_to_speech(body: TTSRequest):
+async def text_to_speech(body: TTSRequest, request: Request = None):
     """Convert text to speech using the user's cloned voice."""
     if not elevenlabs or not elevenlabs.enabled:
         raise HTTPException(400, "ElevenLabs not configured")
-    
+
+    import time as _time
+    started = _time.perf_counter()
     audio_b64 = await elevenlabs.text_to_speech_base64(
         body.text,
         stability=body.stability,
         similarity_boost=body.similarity_boost
     )
-    
+    latency_ms = int((_time.perf_counter() - started) * 1000)
+
+    # Log to unified cost intelligence (ElevenLabs charges per character)
+    try:
+        user_id = getattr(request.state, "user_id", None) if request else None
+        await cost_intel.log_cost_event(
+            db, provider="elevenlabs", service="eleven_multilingual_v2",
+            feature="voice", user_id=user_id, characters=len(body.text),
+            success=bool(audio_b64), latency_ms=latency_ms,
+        )
+    except Exception as _e:
+        logger.warning("cost log (elevenlabs) failed: %s", _e)
+
     if not audio_b64:
         raise HTTPException(500, "TTS generation failed")
-    
+
     return {
         "audio_base64": audio_b64,
         "format": "mp3",
@@ -2811,6 +2856,7 @@ app.include_router(api_router)
 app.include_router(auth_routes_mod.router, prefix="/api")
 app.include_router(admin_routes_mod.router, prefix="/api/admin")
 app.include_router(admin_routes_mod.public_router, prefix="/api/features")
+app.include_router(cost_intel.router, prefix="/api/admin")
 
 
 async def _resolve_expo_tunnel_url() -> str:
@@ -2969,6 +3015,7 @@ async def _on_startup():
         await security_mod.ensure_indexes(db)
         await admin_routes_mod.ensure_indexes(db)
         await admin_routes_mod.bootstrap_defaults(db)
+        await cost_intel.ensure_indexes(db)
         await auth_mod.seed_admin(db)
     except Exception as e:
         logger.warning("Auth startup hook failed: %s", e)

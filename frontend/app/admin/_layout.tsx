@@ -8,7 +8,7 @@ const NAV = [
   { href: "/admin/finance", label: "Finance Intelligence", icon: "💰" },
   { href: "/admin/users", label: "Users", icon: "👥" },
   { href: "/admin/ai-models", label: "AI Model Control", icon: "🧠" },
-  { href: "/admin/costs", label: "Cost Center", icon: "💸" },
+  { href: "/admin/costs", label: "Cost Intelligence", icon: "💸" },
   { href: "/admin/prompts", label: "Prompts", icon: "📝" },
   { href: "/admin/features", label: "Feature Flags", icon: "🚩" },
   { href: "/admin/billing", label: "Billing & Plans", icon: "💳" },
