@@ -13,6 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -61,6 +62,14 @@ function StyleBar({ label, value, leftLabel, rightLabel }: { label: string; valu
 }
 
 export default function TwinScreen() {
+  return (
+    <FeatureGate feature="digital_twin">
+      <TwinScreenInner />
+    </FeatureGate>
+  );
+}
+
+function TwinScreenInner() {
   const [profile, setProfile] = useState<TwinProfile | null>(null);
   const [stylePrompt, setStylePrompt] = useState<string>("");
   const [loading, setLoading] = useState(true);

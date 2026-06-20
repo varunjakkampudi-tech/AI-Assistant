@@ -9,6 +9,7 @@ import {
   Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -65,6 +66,14 @@ const PLAN_TYPE_META: Record<string, { icon: keyof typeof Ionicons.glyphMap; col
 };
 
 export default function ChiefScreen() {
+  return (
+    <FeatureGate feature="chief_of_staff">
+      <ChiefScreenInner />
+    </FeatureGate>
+  );
+}
+
+function ChiefScreenInner() {
   const router = useRouter();
   const [briefing, setBriefing] = useState<ChiefBriefing | null>(null);
   const [suggestions, setSuggestions] = useState<any[]>([]);

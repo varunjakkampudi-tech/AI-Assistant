@@ -10,6 +10,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -62,6 +63,14 @@ const TYPE_ICONS: Record<string, keyof typeof import("@expo/vector-icons/Ionicon
 };
 
 export default function GraphScreen() {
+  return (
+    <FeatureGate feature="knowledge_graph">
+      <GraphScreenInner />
+    </FeatureGate>
+  );
+}
+
+function GraphScreenInner() {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

@@ -10,6 +10,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -29,6 +30,14 @@ const CATEGORIES: { key: MemoryCategory | "all"; label: string; icon: keyof type
 ];
 
 export default function MemoriesScreen() {
+  return (
+    <FeatureGate feature="memory_bank">
+      <MemoriesScreenInner />
+    </FeatureGate>
+  );
+}
+
+function MemoriesScreenInner() {
   const [items, setItems] = useState<Memory[] | null>(null);
   const [cat, setCat] = useState<MemoryCategory | "all">("all");
   const [search, setSearch] = useState("");

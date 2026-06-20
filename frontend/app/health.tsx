@@ -11,6 +11,7 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -47,6 +48,14 @@ const METRIC_META: Record<string, { label: string; icon: keyof typeof import("@e
 };
 
 export default function HealthScreen() {
+  return (
+    <FeatureGate feature="health">
+      <HealthScreenInner />
+    </FeatureGate>
+  );
+}
+
+function HealthScreenInner() {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

@@ -7,7 +7,7 @@
  * Refreshes every 60s so admin toggles propagate to end users quickly.
  */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, AppState } from "react-native";
 import { authFetch } from "./auth";
 
 type Features = Record<string, boolean>;
@@ -40,8 +40,16 @@ export function FeaturesProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     refresh();
-    timer.current = setInterval(refresh, 60_000);
-    return () => { if (timer.current) clearInterval(timer.current); };
+    timer.current = setInterval(refresh, 20_000);
+    // Refresh immediately when the app comes back to the foreground so
+    // super-admin toggles propagate to all users without waiting for the next tick.
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => {
+      if (timer.current) clearInterval(timer.current);
+      sub.remove();
+    };
   }, [refresh]);
 
   return <FeaturesContext.Provider value={{ features, loading, refresh }}>{children}</FeaturesContext.Provider>;

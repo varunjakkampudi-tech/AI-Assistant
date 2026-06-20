@@ -11,6 +11,7 @@ import {
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 
 import { theme } from "@/src/theme";
 import { api } from "@/src/api";
@@ -80,6 +81,14 @@ function formatWhen(iso?: string) {
 }
 
 export default function SearchScreen() {
+  return (
+    <FeatureGate feature="search_everything">
+      <SearchScreenInner />
+    </FeatureGate>
+  );
+}
+
+function SearchScreenInner() {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<Set<string>>(new Set(SOURCE_FILTERS.map((f) => f.id)));
   const [result, setResult] = useState<SearchResult | null>(null);

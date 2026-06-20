@@ -14,6 +14,7 @@ import {
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -76,6 +77,14 @@ const formatCurrency = (n: number, currency = "INR") => {
 };
 
 export default function FinanceScreen() {
+  return (
+    <FeatureGate feature="finance_brain">
+      <FinanceScreenInner />
+    </FeatureGate>
+  );
+}
+
+function FinanceScreenInner() {
   const [summary, setSummary] = useState<SpendingSummary | null>(null);
   const [insights, setInsights] = useState<Insight[]>([]);
   const [recurring, setRecurring] = useState<RecurringTx[]>([]);

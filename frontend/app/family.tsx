@@ -8,6 +8,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { FeatureGate } from "@/src/features";
 import { useFocusEffect } from "expo-router";
 
 import { theme } from "@/src/theme";
@@ -21,6 +22,14 @@ interface FamilyResponse {
 }
 
 export default function FamilyScreen() {
+  return (
+    <FeatureGate feature="family_hub">
+      <FamilyScreenInner />
+    </FeatureGate>
+  );
+}
+
+function FamilyScreenInner() {
   const [data, setData] = useState<FamilyResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
