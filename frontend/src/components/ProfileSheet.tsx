@@ -124,7 +124,9 @@ export default function ProfileSheet({ visible, onClose }: Props) {
           onPress={(e) => e.stopPropagation()}
         >
           <View style={styles.topRow}>
-            <View style={styles.handle} />
+            <View style={styles.handle} pointerEvents="none">
+              <View style={styles.handleBar} />
+            </View>
             <Pressable onPress={onClose} hitSlop={10} style={styles.closeBtn} testID="profile-close">
               <Ionicons name="close" size={20} color={c.onSurfaceSecondary} />
             </Pressable>
@@ -326,17 +328,29 @@ const makeStyles = (c: ReturnType<typeof useColors>) => StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: c.border,
   },
-  topRow: { flexDirection: "row", alignItems: "center", marginBottom: theme.spacing.md },
+  topRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: theme.spacing.md,
+    paddingTop: 4,
+  },
   handle: {
-    flex: 1,
-    alignSelf: "center",
+    position: "absolute",
+    top: 8,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+  },
+  handleBar: {
+    width: 40,
     height: 4,
-    maxWidth: 40,
-    marginLeft: 40,
     borderRadius: 2,
     backgroundColor: c.borderStrong,
   },
   closeBtn: {
+    marginLeft: "auto",
+    marginTop: 18,
     width: 32, height: 32, borderRadius: 16,
     alignItems: "center", justifyContent: "center",
     backgroundColor: c.surfaceSecondary,
